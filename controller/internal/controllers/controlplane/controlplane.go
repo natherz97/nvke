@@ -6,6 +6,7 @@ package controlplane
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -109,11 +110,18 @@ func (c *controlPlane) size() int {
 func (c *controlPlane) nodesForRemediation() []db.Node {
 	var nodes []db.Node
 	for _, node := range c.nodes {
-		if isMarkedForRecycling(node) {
+		if isMarkedForRecycling(node) && !node.IsAdopted() {
 			nodes = append(nodes, node)
 		}
 	}
 	return nodes
+}
+
+// hasAdoptedNodes reports whether the control plane has adopted nodes (POST
+// /clusters/adopt). Its operator manages it outside NVKE, so NVKE never replaces
+// its nodes.
+func (c *controlPlane) hasAdoptedNodes() bool {
+	return slices.ContainsFunc(c.nodes, db.Node.IsAdopted)
 }
 
 // surgeBudget is how many surge nodes the rollout may run concurrently,
