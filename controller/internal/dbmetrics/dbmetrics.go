@@ -454,7 +454,7 @@ func (c *Collector) emitClusterInfo(ch chan<- prometheus.Metric, ctx *clusterInf
 		string(cluster.CniPlugin),
 		strconv.FormatBool(cluster.EtcdEncrypted),
 		cluster.KubernetesVersion,
-		cluster.ControlPlaneVIP,
+		cluster.APIEndpoint(),
 		strconv.FormatBool(cluster.EnableCPNodeRecycling),
 		strconv.FormatBool(cluster.TeleportEnabled),
 		getClusterStatus(cluster),

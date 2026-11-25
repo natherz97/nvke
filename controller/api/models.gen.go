@@ -215,7 +215,11 @@ type Cluster struct {
 	// EtcdEncrypted Whether etcd is encrypted at rest.
 	EtcdEncrypted bool `json:"etcdEncrypted"`
 
-	// ControlPlaneVIP API server VIP, if configured.
+	// ControlPlaneVIP Deprecated: read `controlPlaneConfig.loadBalancer`. API server endpoint
+	// address, if NVKE runs kube-vip for the cluster. It repeats the address from
+	// `controlPlaneConfig.loadBalancer.kubeVIP` for clients that still read this
+	// field, and is absent for `external`, `firstMachineIP` and clusters with no
+	// load balancer.
 	ControlPlaneVIP *string `json:"controlPlaneVIP,omitempty"`
 
 	// EnableCPNodeRecycling When true, control-plane upgrades and configuration changes replace nodes
@@ -367,7 +371,7 @@ type ControlPlaneConfig struct {
 	// ControllerManager Arguments for one control-plane component.
 	ControllerManager *ControlPlaneComponentConfig `json:"controllerManager,omitempty"`
 
-	// DesiredCount The desired number of cluster-level control plane nodes. Creating a cluster with or increasing this count above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+	// DesiredCount The desired number of cluster-level control plane nodes. Creating a cluster with or increasing this count above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
 	DesiredCount int `json:"desiredCount,omitempty"`
 
 	// Infra Infra provider control plane fields.
@@ -375,6 +379,9 @@ type ControlPlaneConfig struct {
 
 	// LaunchLayer LaunchLayer settings for control-plane nodes.
 	LaunchLayer *LaunchLayerControlPlaneProvider `json:"launchLayer,omitempty"`
+
+	// LoadBalancer How the Kubernetes API endpoint is provided. Present only when it was set at creation.
+	LoadBalancer *LoadBalancer `json:"loadBalancer,omitempty"`
 
 	// MachineAnnotations Annotations applied to control-plane CAPI Machines at creation, including scale-out and replacement Machines. Fixed at cluster creation and not reconciled after provisioning. Keys under nke.nvidia.com, nke.io, nvke.nvidia.com, kubernetes.io, k8s.io, cluster.x-k8s.io and their subdomains require an explicit deployment allowlist entry for this metadata type.
 	MachineAnnotations map[string]string `json:"machineAnnotations,omitempty"`
@@ -545,7 +552,7 @@ type CreateClusterControlPlaneConfig struct {
 	// ControllerManager Arguments for one control-plane component.
 	ControllerManager *ControlPlaneComponentConfig `json:"controllerManager,omitempty"`
 
-	// DesiredCount The desired number of cluster-level control plane nodes. Must be at least 1. Values above 1 require controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+	// DesiredCount The desired number of cluster-level control plane nodes. Must be at least 1. Values above 1 require an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
 	DesiredCount int `json:"desiredCount"`
 
 	// Infra Infra provider fields for cluster-level control plane configuration. Mutually exclusive with `nico`.
@@ -555,6 +562,16 @@ type CreateClusterControlPlaneConfig struct {
 	// LaunchLayerNodePoolProvider — control-plane nodes are still
 	// LaunchLayer machines. Fixed at creation.
 	LaunchLayer *LaunchLayerControlPlaneProvider `json:"launchLayer,omitempty"`
+
+	// LoadBalancer How the cluster's Kubernetes API endpoint is provided. Set exactly one of
+	// `external`, `kubeVIP` or `firstMachineIP`. Fixed at cluster creation.
+	// The deprecated top-level `controlPlaneVIP` may be sent with `kubeVIP` or
+	// `external` only when it equals their address, and never with
+	// `firstMachineIP`. When `loadBalancer` is omitted, a top-level
+	// `controlPlaneVIP` is stored as `kubeVIP` with that address. With neither, no
+	// load balancer is stored, the first control-plane node's IP is the API
+	// endpoint, and no `loadBalancer` is reported.
+	LoadBalancer *LoadBalancer `json:"loadBalancer,omitempty"`
 
 	// MachineAnnotations Annotations applied to control-plane CAPI Machines at creation, including scale-out and replacement Machines. Fixed at cluster creation and not reconciled after provisioning. Keys under nke.nvidia.com, nke.io, nvke.nvidia.com, kubernetes.io, k8s.io, cluster.x-k8s.io and their subdomains require an explicit deployment allowlist entry for this metadata type.
 	MachineAnnotations map[string]string `json:"machineAnnotations,omitempty"`
@@ -609,7 +626,15 @@ type CreateClusterRequest struct {
 	// EtcdEncrypted Encrypt etcd at rest. Can be turned on later with `enableEtcdEncryption`; cannot be turned off.
 	EtcdEncrypted bool `json:"etcdEncrypted"`
 
-	// ControlPlaneVIP Virtual IP for the API server through kube-vip. Omit to skip kube-vip and
+	// ControlPlaneVIP Deprecated: use `controlPlaneConfig.loadBalancer.kubeVIP.vip`, which behaves
+	// the same. Sent alone, it is stored as `controlPlaneConfig.loadBalancer.kubeVIP`.
+	// To provide the endpoint without NVKE configuring kube-vip, use
+	// `controlPlaneConfig.loadBalancer.external.host`. It may be sent together with
+	// `controlPlaneConfig.loadBalancer.kubeVIP` or `.external` only when it equals
+	// their address, so a cluster read back from the API can be sent again
+	// unchanged. Any other combination is rejected.
+	//
+	// Virtual IP for the API server through kube-vip. Omit to skip kube-vip and
 	// use the first control-plane node's IP as the API server endpoint. Must not
 	// fall inside the pod or service CIDR. An explicit empty string is rejected.
 	// By default, a cluster without a VIP must have exactly one desired
@@ -618,6 +643,7 @@ type CreateClusterRequest struct {
 	// allowControlPlaneWithoutVIP setting. That override keeps the initializing
 	// node's IP as the endpoint; replacing that node can break API access.
 	// Quorum, health and deletion protections still apply.
+	// Deprecated:
 	ControlPlaneVIP string `json:"controlPlaneVIP,omitempty"`
 
 	// TeleportEnabled Enable Teleport SSH enrollment for nodes in this cluster. When omitted, the server-side default for the site is applied.
@@ -679,7 +705,7 @@ type CreateNodePoolRequest struct {
 	// NodeTaints Taints applied to the pool's nodes at creation. Not allowed on control-plane pools. Keys under nvke.nvidia.com, nke.nvidia.com (legacy), nke.io (legacy), kubernetes.io, k8s.io and their subdomains are reserved. Each key and effect pair may appear only once.
 	NodeTaints []NodeTaint `json:"nodeTaints,omitempty"`
 
-	// DesiredNodeCount The desired number of nodes in the pool. For control-plane pools, aggregate capacity above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+	// DesiredNodeCount The desired number of nodes in the pool. For control-plane pools, aggregate capacity above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
 	DesiredNodeCount int `json:"desiredNodeCount"`
 
 	// Description Free-text description.
@@ -774,6 +800,22 @@ type EtcdKeyRotationStatusPhase string
 // EtcdKeyRotationStatusState Whether the owned rotation is running, succeeded, or failed.
 type EtcdKeyRotationStatusState string
 
+// ExternalLoadBalancer An address that the operator brings up on the control-plane nodes, for
+// example with a kube-vip the operator manages. NVKE uses it as the API server
+// endpoint and does not configure kube-vip. Counts as a control-plane VIP
+// for scaling, upgrades and node replacement.
+type ExternalLoadBalancer struct {
+	// Host IPv4 address of the endpoint. Must not fall inside the pod or service CIDR.
+	Host string `json:"host"`
+}
+
+// FirstMachineIPLoadBalancer Use the first control-plane node's IP as the API server endpoint, and do not
+// configure kube-vip. Development only. By default the cluster must then have
+// exactly one desired control-plane node. Scale-up above one node, upgrades and
+// node replacement require a VIP unless the controller deployment enables the
+// development-only allowControlPlaneWithoutVIP setting. Takes no fields.
+type FirstMachineIPLoadBalancer = map[string]interface{}
+
 // GenericError Error response body.
 type GenericError struct {
 	// Message What went wrong.
@@ -850,6 +892,13 @@ type InfraNodeSetProvider struct {
 
 	// PreKubeadmCommands Cloud-init runcmd entries for CAPI-backed nodes
 	PreKubeadmCommands []string `json:"preKubeadmCommands,omitempty"`
+}
+
+// KubeVIPLoadBalancer A virtual IP that NVKE configures kube-vip to advertise over BGP.
+// Same behavior as the deprecated top-level `controlPlaneVIP`.
+type KubeVIPLoadBalancer struct {
+	// Vip IPv4 address of the virtual IP. Must not fall inside the pod or service CIDR.
+	Vip string `json:"vip"`
 }
 
 // LaunchLayerClusterOwner The LaunchLayer identity requests are attributed to.
@@ -1081,6 +1130,33 @@ type ListNodesResponse struct {
 type ListReleasesResponse struct {
 	// Releases The list of releases
 	Releases []Release `json:"releases"`
+}
+
+// LoadBalancer How the cluster's Kubernetes API endpoint is provided. Set exactly one of
+// `external`, `kubeVIP` or `firstMachineIP`. Fixed at cluster creation.
+// The deprecated top-level `controlPlaneVIP` may be sent with `kubeVIP` or
+// `external` only when it equals their address, and never with
+// `firstMachineIP`. When `loadBalancer` is omitted, a top-level
+// `controlPlaneVIP` is stored as `kubeVIP` with that address. With neither, no
+// load balancer is stored, the first control-plane node's IP is the API
+// endpoint, and no `loadBalancer` is reported.
+type LoadBalancer struct {
+	// External An address that the operator brings up on the control-plane nodes, for
+	// example with a kube-vip the operator manages. NVKE uses it as the API server
+	// endpoint and does not configure kube-vip. Counts as a control-plane VIP
+	// for scaling, upgrades and node replacement.
+	External *ExternalLoadBalancer `json:"external,omitempty"`
+
+	// FirstMachineIP Use the first control-plane node's IP as the API server endpoint, and do not
+	// configure kube-vip. Development only. By default the cluster must then have
+	// exactly one desired control-plane node. Scale-up above one node, upgrades and
+	// node replacement require a VIP unless the controller deployment enables the
+	// development-only allowControlPlaneWithoutVIP setting. Takes no fields.
+	FirstMachineIP *FirstMachineIPLoadBalancer `json:"firstMachineIP,omitempty"`
+
+	// KubeVIP A virtual IP that NVKE configures kube-vip to advertise over BGP.
+	// Same behavior as the deprecated top-level `controlPlaneVIP`.
+	KubeVIP *KubeVIPLoadBalancer `json:"kubeVIP,omitempty"`
 }
 
 // MachineHealthIssue Flags the underlying machine for repair.
@@ -1514,7 +1590,7 @@ type NodePoolCreateConfig struct {
 	// NodeTaints Taints applied to the pool's nodes at creation. Not allowed on control-plane pools. Keys under nvke.nvidia.com, nke.nvidia.com (legacy), nke.io (legacy), kubernetes.io, k8s.io and their subdomains are reserved. Each key and effect pair may appear only once.
 	NodeTaints []NodeTaint `json:"nodeTaints,omitempty"`
 
-	// DesiredNodeCount The desired number of nodes in the pool. For control-plane pools, aggregate capacity above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+	// DesiredNodeCount The desired number of nodes in the pool. For control-plane pools, aggregate capacity above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
 	DesiredNodeCount int `json:"desiredNodeCount"`
 
 	// Description Free-text description.
@@ -1653,15 +1729,15 @@ type SpireServer struct {
 // UpdateClusterControlPlaneConfig Changes to `release` or the Kubernetes version start a control-plane
 // rollout. All fields are optional. A provider payload that does not match the
 // cluster's provider is rejected with 400.
-// Rollout-triggering changes require controlPlaneVIP unless the development-only
+// Rollout-triggering changes require an API endpoint (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only
 // allowControlPlaneWithoutVIP setting is enabled. maxSurge alone does not
-// trigger a rollout and remains mutable without a VIP.
+// trigger a rollout and remains mutable without an API endpoint.
 type UpdateClusterControlPlaneConfig struct {
 	// AutoScaleDownDisabled When true, automatic control-plane scale-down is disabled, so decreasing desiredCount leaves the surplus nodes in place. When scale-down is enabled it never reduces the control plane below the fault-tolerant floor of three nodes.
 	AutoScaleDownDisabled *bool `json:"autoScaleDownDisabled,omitempty"`
 
 	// DesiredCount The desired number of cluster-level control plane nodes. Must be at least 1.
-	// Increasing the count above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+	// Increasing the count above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
 	DesiredCount *int `json:"desiredCount,omitempty"`
 
 	// Infra The mutable infra provider control plane fields. Every field carries three states: omitted
@@ -1702,9 +1778,9 @@ type UpdateClusterRequest struct {
 	// ControlPlaneConfig Changes to `release` or the Kubernetes version start a control-plane
 	// rollout. All fields are optional. A provider payload that does not match the
 	// cluster's provider is rejected with 400.
-	// Rollout-triggering changes require controlPlaneVIP unless the development-only
+	// Rollout-triggering changes require an API endpoint (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only
 	// allowControlPlaneWithoutVIP setting is enabled. maxSurge alone does not
-	// trigger a rollout and remains mutable without a VIP.
+	// trigger a rollout and remains mutable without an API endpoint.
 	ControlPlaneConfig *UpdateClusterControlPlaneConfig `json:"controlPlaneConfig,omitempty"`
 
 	// ControlPlaneKubernetesVersion Target control-plane version, as X.Y.Z with no leading "v". Must be newer than
@@ -1766,9 +1842,9 @@ type UpdateInProgressType string
 // UpdateNodePoolRequest All fields are optional. A provider payload that does not match the node pool's
 // cluster is rejected with 400.
 // Updating a control-plane pool in a way that creates a replacement node set
-// requires controlPlaneVIP unless the development-only allowControlPlaneWithoutVIP
+// requires an API endpoint (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP
 // setting is enabled. maxSurge alone does not create a replacement
-// and remains mutable without a VIP.
+// and remains mutable without an API endpoint.
 type UpdateNodePoolRequest struct {
 	// AutoModeDisabled Disables auto-mode (automatic node recycling).
 	AutoModeDisabled *bool `json:"autoModeDisabled,omitempty"`
@@ -1779,7 +1855,7 @@ type UpdateNodePoolRequest struct {
 	// Description Free-text description.
 	Description *string `json:"description,omitempty"`
 
-	// DesiredNodeCount The desired number of nodes in the pool. Increasing aggregate control-plane capacity above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+	// DesiredNodeCount The desired number of nodes in the pool. Increasing aggregate control-plane capacity above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
 	DesiredNodeCount *int `json:"desiredNodeCount,omitempty"`
 
 	// Infra The mutable infra provider node pool fields. Every field carries three states: omitted

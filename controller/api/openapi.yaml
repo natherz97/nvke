@@ -943,7 +943,7 @@ paths:
         Returns 400 when deletion would leave no joined control-plane node or
         `machineHealthIssue` is invalid. Delete the cluster to remove its last
         joined control-plane node.
-        Deleting a control-plane node requires controlPlaneVIP because the controller
+        Deleting a control-plane node requires an API endpoint (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) because the controller
         replaces it, unless allowControlPlaneWithoutVIP is enabled for development.
         Worker node deletion is unaffected.
 
@@ -1131,7 +1131,16 @@ components:
         controlPlaneVIP:
           type: string
           format: ipv4
+          deprecated: true
           description: |
+            Deprecated: use `controlPlaneConfig.loadBalancer.kubeVIP.vip`, which behaves
+            the same. Sent alone, it is stored as `controlPlaneConfig.loadBalancer.kubeVIP`.
+            To provide the endpoint without NVKE configuring kube-vip, use
+            `controlPlaneConfig.loadBalancer.external.host`. It may be sent together with
+            `controlPlaneConfig.loadBalancer.kubeVIP` or `.external` only when it equals
+            their address, so a cluster read back from the API can be sent again
+            unchanged. Any other combination is rejected.
+
             Virtual IP for the API server through kube-vip. Omit to skip kube-vip and
             use the first control-plane node's IP as the API server endpoint. Must not
             fall inside the pod or service CIDR. An explicit empty string is rejected.
@@ -1242,7 +1251,7 @@ components:
         desiredCount:
           type: integer
           minimum: 1
-          description: The desired number of cluster-level control plane nodes. Creating a cluster with or increasing this count above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+          description: The desired number of cluster-level control plane nodes. Creating a cluster with or increasing this count above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
           x-go-type-skip-optional-pointer: true
         maxSurge:
           type: integer
@@ -1316,6 +1325,10 @@ components:
           $ref: "#/components/schemas/ControlPlaneComponentConfig"
         scheduler:
           $ref: "#/components/schemas/ControlPlaneComponentConfig"
+        loadBalancer:
+          allOf:
+            - $ref: "#/components/schemas/LoadBalancer"
+          description: How the Kubernetes API endpoint is provided. Present only when it was set at creation.
     ClusterControlPlane:
       type: object
       additionalProperties: false
@@ -1414,7 +1427,7 @@ components:
         desiredCount:
           type: integer
           minimum: 1
-          description: The desired number of cluster-level control plane nodes. Must be at least 1. Values above 1 require controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+          description: The desired number of cluster-level control plane nodes. Must be at least 1. Values above 1 require an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
           x-go-type-skip-optional-pointer: true
         maxSurge:
           type: integer
@@ -1489,6 +1502,66 @@ components:
           $ref: "#/components/schemas/ControlPlaneComponentConfig"
         scheduler:
           $ref: "#/components/schemas/ControlPlaneComponentConfig"
+        loadBalancer:
+          $ref: "#/components/schemas/LoadBalancer"
+    LoadBalancer:
+      type: object
+      additionalProperties: false
+      description: |
+        How the cluster's Kubernetes API endpoint is provided. Set exactly one of
+        `external`, `kubeVIP` or `firstMachineIP`. Fixed at cluster creation.
+        The deprecated top-level `controlPlaneVIP` may be sent with `kubeVIP` or
+        `external` only when it equals their address, and never with
+        `firstMachineIP`. When `loadBalancer` is omitted, a top-level
+        `controlPlaneVIP` is stored as `kubeVIP` with that address. With neither, no
+        load balancer is stored, the first control-plane node's IP is the API
+        endpoint, and no `loadBalancer` is reported.
+      properties:
+        external:
+          $ref: "#/components/schemas/ExternalLoadBalancer"
+        kubeVIP:
+          $ref: "#/components/schemas/KubeVIPLoadBalancer"
+        firstMachineIP:
+          $ref: "#/components/schemas/FirstMachineIPLoadBalancer"
+    ExternalLoadBalancer:
+      type: object
+      additionalProperties: false
+      required:
+        - host
+      description: |
+        An address that the operator brings up on the control-plane nodes, for
+        example with a kube-vip the operator manages. NVKE uses it as the API server
+        endpoint and does not configure kube-vip. Counts as a control-plane VIP
+        for scaling, upgrades and node replacement.
+      properties:
+        host:
+          type: string
+          format: ipv4
+          description: |
+            IPv4 address of the endpoint. Must not fall inside the pod or service CIDR.
+    KubeVIPLoadBalancer:
+      type: object
+      additionalProperties: false
+      required:
+        - vip
+      description: |
+        A virtual IP that NVKE configures kube-vip to advertise over BGP.
+        Same behavior as the deprecated top-level `controlPlaneVIP`.
+      properties:
+        vip:
+          type: string
+          format: ipv4
+          description: |
+            IPv4 address of the virtual IP. Must not fall inside the pod or service CIDR.
+    FirstMachineIPLoadBalancer:
+      type: object
+      additionalProperties: false
+      description: |
+        Use the first control-plane node's IP as the API server endpoint, and do not
+        configure kube-vip. Development only. By default the cluster must then have
+        exactly one desired control-plane node. Scale-up above one node, upgrades and
+        node replacement require a VIP unless the controller deployment enables the
+        development-only allowControlPlaneWithoutVIP setting. Takes no fields.
     UpdateClusterControlPlaneConfig:
       type: object
       additionalProperties: false
@@ -1501,16 +1574,16 @@ components:
         Changes to `release` or the Kubernetes version start a control-plane
         rollout. All fields are optional. A provider payload that does not match the
         cluster's provider is rejected with 400.
-        Rollout-triggering changes require controlPlaneVIP unless the development-only
+        Rollout-triggering changes require an API endpoint (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only
         allowControlPlaneWithoutVIP setting is enabled. maxSurge alone does not
-        trigger a rollout and remains mutable without a VIP.
+        trigger a rollout and remains mutable without an API endpoint.
       properties:
         desiredCount:
           type: integer
           minimum: 1
           description: |
             The desired number of cluster-level control plane nodes. Must be at least 1.
-            Increasing the count above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+            Increasing the count above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
         maxSurge:
           type: integer
           minimum: 0
@@ -1585,7 +1658,12 @@ components:
         controlPlaneVIP:
           type: string
           format: ipv4
-          description: API server VIP, if configured.
+          description: |
+            Deprecated: read `controlPlaneConfig.loadBalancer`. API server endpoint
+            address, if NVKE runs kube-vip for the cluster. It repeats the address from
+            `controlPlaneConfig.loadBalancer.kubeVIP` for clients that still read this
+            field, and is absent for `external`, `firstMachineIP` and clusters with no
+            load balancer.
           x-order: 10
         enableCPNodeRecycling:
           type: boolean
@@ -1914,7 +1992,7 @@ components:
         desiredNodeCount:
           type: integer
           minimum: 0
-          description: The desired number of nodes in the pool. For control-plane pools, aggregate capacity above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+          description: The desired number of nodes in the pool. For control-plane pools, aggregate capacity above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
           x-order: 15
         description:
           type: string
@@ -1965,9 +2043,9 @@ components:
         All fields are optional. A provider payload that does not match the node pool's
         cluster is rejected with 400.
         Updating a control-plane pool in a way that creates a replacement node set
-        requires controlPlaneVIP unless the development-only allowControlPlaneWithoutVIP
+        requires an API endpoint (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP
         setting is enabled. maxSurge alone does not create a replacement
-        and remains mutable without a VIP.
+        and remains mutable without an API endpoint.
       # No required fields since all fields are optional
       properties:
         autoProvisionDisabled:
@@ -1991,7 +2069,7 @@ components:
         desiredNodeCount:
           type: integer
           minimum: 0
-          description: The desired number of nodes in the pool. Increasing aggregate control-plane capacity above 1 requires controlPlaneVIP on the cluster unless the development-only allowControlPlaneWithoutVIP setting is enabled.
+          description: The desired number of nodes in the pool. Increasing aggregate control-plane capacity above 1 requires an API endpoint on the cluster (`controlPlaneConfig.loadBalancer.kubeVIP` or `.external`) unless the development-only allowControlPlaneWithoutVIP setting is enabled.
         recycleBudget:
           type: integer
           minimum: 0

@@ -115,7 +115,7 @@ func TestReconcileStuckPendingNodes_ReplacesAndMarksDomain(t *testing.T) {
 	t.Parallel()
 
 	clusterID := uuid.New()
-	cluster := db.Cluster{ID: clusterID, Name: "test-cluster", ControlPlaneVIP: "10.0.0.1", ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 3}}
+	cluster := db.Cluster{ID: clusterID, Name: "test-cluster", ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 3, ControlPlaneConfigSpec: testutil.WithKubeVIP(db.ControlPlaneConfigSpec{}, "10.0.0.1")}}
 	stuck := stuckPendingNode(clusterID, "cp-stuck", 2*time.Hour)
 	healthyB := healthyCPNode(clusterID, "cp-b", time.Now().Add(-5*time.Hour))
 	healthyB.FailureDomain = "B"
@@ -158,7 +158,7 @@ func TestReconcileStuckPendingNodes_NoOps(t *testing.T) {
 	t.Parallel()
 
 	clusterID := uuid.New()
-	cluster := db.Cluster{ID: clusterID, Name: "test-cluster", ControlPlaneVIP: "10.0.0.1"}
+	cluster := db.Cluster{ID: clusterID, Name: "test-cluster", ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.1")}
 	unavailable := placementStub{unavailable: true}
 	twoDomains := &failureDomains{eligible: []string{"A", "B"}}
 

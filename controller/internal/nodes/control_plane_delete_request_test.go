@@ -483,7 +483,7 @@ func TestLiveDeleteVIPOverridePreservesSafety(t *testing.T) {
 		count     int
 		wantError string
 	}{
-		{name: "default rejects without VIP", count: 4, wantError: "controlPlaneVIP"},
+		{name: "default rejects without VIP", count: 4, wantError: "an API endpoint is required"},
 		{name: "override permits replacement intent", allow: true, count: 4},
 		{name: "override keeps quorum floor", allow: true, count: 3, wantError: "below the minimum of 3"},
 		{name: "override protects last joined node", allow: true, count: 1, wantError: "last joined control-plane node"},

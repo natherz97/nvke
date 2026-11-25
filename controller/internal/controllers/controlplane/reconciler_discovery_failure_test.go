@@ -104,13 +104,12 @@ func TestReconcileRemediatesWhenFailureDomainDiscoveryFails(t *testing.T) {
 				ID:                    clusterID,
 				Name:                  clusterName,
 				KubernetesVersion:     spec.KubernetesVersion,
-				ControlPlaneVIP:       "10.0.0.100",
 				EnableCPNodeRecycling: true,
 				ControlPlaneConfig: db.ControlPlaneConfig{
 					ConfigurationID:        configID,
 					DesiredCount:           3,
 					MaxSurge:               1,
-					ControlPlaneConfigSpec: spec,
+					ControlPlaneConfigSpec: testutil.WithKubeVIP(spec, "10.0.0.100"),
 				},
 			}
 			cluster.SetNicoProvider(db.NicoClusterProvider{OrgID: "test-org", SiteID: uuid.New(), VpcID: uuid.New()})
@@ -175,11 +174,10 @@ func TestReconcileDoesNotScaleUpWhenFailureDomainDiscoveryFails(t *testing.T) {
 				ID:                clusterID,
 				Name:              clusterName,
 				KubernetesVersion: spec.KubernetesVersion,
-				ControlPlaneVIP:   "10.0.0.100",
 				ControlPlaneConfig: db.ControlPlaneConfig{
 					ConfigurationID:        configID,
 					DesiredCount:           3,
-					ControlPlaneConfigSpec: spec,
+					ControlPlaneConfigSpec: testutil.WithKubeVIP(spec, "10.0.0.100"),
 				},
 			}
 			cluster.SetNicoProvider(db.NicoClusterProvider{OrgID: "test-org", SiteID: uuid.New(), VpcID: uuid.New()})

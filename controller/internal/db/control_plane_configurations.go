@@ -48,6 +48,78 @@ type ControlPlaneConfigSpec struct {
 	APIServerExtraArgs         map[string]string `json:"api_server_extra_args,omitempty" bun:"-"`
 	ControllerManagerExtraArgs map[string]string `json:"controller_manager_extra_args,omitempty" bun:"-"`
 	SchedulerExtraArgs         map[string]string `json:"scheduler_extra_args,omitempty" bun:"-"`
+
+	// LoadBalancer is how the cluster's Kubernetes API endpoint is provided. It is
+	// fixed at cluster creation. It is nil for a cluster created with the
+	// deprecated top-level controlPlaneVIP or with no VIP at all. Use
+	// KubeVIPManaged rather than reading it directly to decide whether NVKE runs
+	// kube-vip.
+	LoadBalancer *LoadBalancer `json:"load_balancer,omitempty" bun:"-"`
+}
+
+// LoadBalancer is how a cluster's Kubernetes API endpoint is provided. Exactly
+// one field is set.
+type LoadBalancer struct {
+	// External is an endpoint the operator provides. NVKE uses it as the API
+	// server endpoint and does not configure kube-vip.
+	External *ExternalLoadBalancer `json:"external,omitempty"`
+	// KubeVIP is a virtual IP that NVKE configures kube-vip to advertise.
+	KubeVIP *KubeVIPLoadBalancer `json:"kube_vip,omitempty"`
+	// FirstMachineIP uses the first control-plane node's IP as the endpoint and
+	// does not configure kube-vip. Development only.
+	FirstMachineIP *FirstMachineIPLoadBalancer `json:"first_machine_ip,omitempty"`
+}
+
+// ExternalLoadBalancer is an operator-provided API endpoint.
+type ExternalLoadBalancer struct {
+	Host string `json:"host"`
+}
+
+// KubeVIPLoadBalancer is a virtual IP that NVKE configures kube-vip for.
+type KubeVIPLoadBalancer struct {
+	VIP string `json:"vip"`
+}
+
+// FirstMachineIPLoadBalancer selects the first control-plane node's IP. It has
+// no fields.
+type FirstMachineIPLoadBalancer struct{}
+
+// Endpoint returns the API server endpoint address the load balancer names, or
+// an empty string for FirstMachineIP and for a nil receiver.
+func (l *LoadBalancer) Endpoint() string {
+	switch {
+	case l == nil:
+		return ""
+	case l.External != nil:
+		return l.External.Host
+	case l.KubeVIP != nil:
+		return l.KubeVIP.VIP
+	default:
+		return ""
+	}
+}
+
+// LegacyControlPlaneVIP returns what the deprecated clusters.control_plane_vip
+// column holds for the load balancer: the kube-vip VIP, and nothing for any other
+// kind. An older controller reads only that column and treats a value as "NVKE
+// runs kube-vip", so mirroring any other kind into it would be wrong.
+func (l *LoadBalancer) LegacyControlPlaneVIP() string {
+	if l == nil || l.KubeVIP == nil {
+		return ""
+	}
+	return l.KubeVIP.VIP
+}
+
+// APIEndpoint returns the cluster's API endpoint address, or an empty string when
+// it has none or uses the first control-plane node's IP. It reads only the stored
+// load balancer: the deprecated control_plane_vip column is never read.
+func (c ControlPlaneConfigSpec) APIEndpoint() string {
+	return c.LoadBalancer.Endpoint()
+}
+
+// KubeVIPManaged reports whether NVKE configures kube-vip for the cluster.
+func (c ControlPlaneConfigSpec) KubeVIPManaged() bool {
+	return c.LoadBalancer != nil && c.LoadBalancer.KubeVIP != nil
 }
 
 type NicoControlPlaneProvider struct {
@@ -202,6 +274,26 @@ func normalizeConfigSpec(cfg ControlPlaneConfigSpec) ControlPlaneConfigSpec {
 	out.Nico = cloneNicoControlPlaneProvider(cfg.Nico)
 	out.Capi = cloneCAPIControlPlaneProvider(cfg.Capi)
 	out.LaunchLayer = cloneLaunchLayerControlPlaneProvider(cfg.LaunchLayer)
+	out.LoadBalancer = cloneLoadBalancer(cfg.LoadBalancer)
+	return out
+}
+
+func cloneLoadBalancer(lb *LoadBalancer) *LoadBalancer {
+	if lb == nil {
+		return nil
+	}
+	out := &LoadBalancer{}
+	if lb.External != nil {
+		external := *lb.External
+		out.External = &external
+	}
+	if lb.KubeVIP != nil {
+		kubeVIP := *lb.KubeVIP
+		out.KubeVIP = &kubeVIP
+	}
+	if lb.FirstMachineIP != nil {
+		out.FirstMachineIP = &FirstMachineIPLoadBalancer{}
+	}
 	return out
 }
 

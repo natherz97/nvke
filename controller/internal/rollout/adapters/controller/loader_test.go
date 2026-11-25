@@ -15,6 +15,7 @@ import (
 	"github.com/dsx-ai-factory/nvke/controller/internal/config"
 	"github.com/dsx-ai-factory/nvke/controller/internal/db"
 	"github.com/dsx-ai-factory/nvke/controller/internal/rollout/adapters/controller"
+	"github.com/dsx-ai-factory/nvke/controller/internal/testutil"
 )
 
 // fakeDB is a minimal db.DB double for the Loader: only GetCluster and
@@ -61,10 +62,10 @@ func TestLoader_LoadCluster(t *testing.T) {
 
 	fake := &fakeDB{
 		cluster: db.Cluster{
-			ID:                clusterID,
-			Name:              "test",
-			KubernetesVersion: "v1.30.0",
-			ControlPlaneVIP:   "10.0.0.5",
+			ID:                 clusterID,
+			Name:               "test",
+			KubernetesVersion:  "v1.30.0",
+			ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.5"),
 		},
 		cpNodes:  []db.Node{cp},
 		allNodes: []db.Node{worker, cp},

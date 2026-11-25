@@ -82,14 +82,14 @@ func TestClusterService_ListClusters(t *testing.T) {
 			name: "success",
 			dbClusters: []db.Cluster{
 				forgeDBCluster(db.Cluster{
-					ID:                uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
-					Name:              "test-cluster",
-					CniPlugin:         "calico",
-					KubernetesVersion: "1.29.0",
-					ControlPlaneVIP:   "10.0.0.1",
-					PodCIDR:           "192.168.0.0/16",
-					ServiceCIDR:       "10.96.0.0/12",
-					Conditions:        mockDBClusterConditions(now),
+					ID:                 uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+					Name:               "test-cluster",
+					CniPlugin:          "calico",
+					KubernetesVersion:  "1.29.0",
+					ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.1"),
+					PodCIDR:            "192.168.0.0/16",
+					ServiceCIDR:        "10.96.0.0/12",
+					Conditions:         mockDBClusterConditions(now),
 					Nico: &db.NicoClusterProvider{
 						OrgID:  testOrgID,
 						SiteID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
@@ -111,7 +111,7 @@ func TestClusterService_ListClusters(t *testing.T) {
 					ControlPlaneVIP:               func() *string { s := "10.0.0.1"; return &s }(),
 					EnableCPNodeRecycling:         func() *bool { b := false; return &b }(),
 					TeleportEnabled:               func() *bool { b := false; return &b }(),
-					ControlPlaneConfig:            defaultAPIControlPlaneConfig(),
+					ControlPlaneConfig:            apiControlPlaneConfigWithKubeVIP("10.0.0.1"),
 					Network: api.ClusterNetwork{
 						PodCIDR:     "192.168.0.0/16",
 						ServiceCIDR: "10.96.0.0/12",
@@ -125,14 +125,14 @@ func TestClusterService_ListClusters(t *testing.T) {
 			nameFilter: func() *string { s := "test-cluster"; return &s }(),
 			dbClusters: []db.Cluster{
 				forgeDBCluster(db.Cluster{
-					ID:                uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
-					Name:              "test-cluster",
-					CniPlugin:         "calico",
-					KubernetesVersion: "1.29.0",
-					ControlPlaneVIP:   "10.0.0.1",
-					PodCIDR:           "192.168.0.0/16",
-					ServiceCIDR:       "10.96.0.0/12",
-					Conditions:        mockDBClusterConditions(now),
+					ID:                 uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"),
+					Name:               "test-cluster",
+					CniPlugin:          "calico",
+					KubernetesVersion:  "1.29.0",
+					ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.1"),
+					PodCIDR:            "192.168.0.0/16",
+					ServiceCIDR:        "10.96.0.0/12",
+					Conditions:         mockDBClusterConditions(now),
 					Nico: &db.NicoClusterProvider{
 						OrgID:  testOrgID,
 						SiteID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
@@ -154,7 +154,7 @@ func TestClusterService_ListClusters(t *testing.T) {
 					ControlPlaneVIP:               func() *string { s := "10.0.0.1"; return &s }(),
 					EnableCPNodeRecycling:         func() *bool { b := false; return &b }(),
 					TeleportEnabled:               func() *bool { b := false; return &b }(),
-					ControlPlaneConfig:            defaultAPIControlPlaneConfig(),
+					ControlPlaneConfig:            apiControlPlaneConfigWithKubeVIP("10.0.0.1"),
 					Network: api.ClusterNetwork{
 						PodCIDR:     "192.168.0.0/16",
 						ServiceCIDR: "10.96.0.0/12",
@@ -211,6 +211,18 @@ func nicoCreateControlPlaneConfig(desiredCount int, vpcPrefixes bool) *api.Creat
 		nico.SubnetIDs = []uuid.UUID{uuid.New()}
 	}
 	return &api.CreateClusterControlPlaneConfig{DesiredCount: desiredCount, Nico: nico}
+}
+
+// expectControlPlaneConfigCreateWithLoadBalancer is expectControlPlaneConfigCreate
+// for a request whose config row must store the given load balancer.
+func expectControlPlaneConfigCreateWithLoadBalancer(tx *mockTx, clusterID uuid.UUID, want *db.LoadBalancer) {
+	cfgID := uuid.New()
+	tx.On("CreateControlPlaneConfiguration", mock.Anything, mock.MatchedBy(func(row *db.ControlPlaneConfiguration) bool {
+		return row.ClusterID == clusterID && row.Config.Nico != nil && assert.ObjectsAreEqual(want, row.Config.LoadBalancer)
+	})).Return(db.ControlPlaneConfiguration{ID: cfgID, ClusterID: clusterID}, nil)
+	tx.On("UpdateCluster", mock.Anything, mock.MatchedBy(func(c *db.Cluster) bool {
+		return c.ID == clusterID && c.ControlPlaneConfig.ConfigurationID == cfgID
+	})).Return(db.Cluster{ID: clusterID}, nil)
 }
 
 func expectControlPlaneConfigCreate(tx *mockTx, clusterID uuid.UUID) {
@@ -278,13 +290,13 @@ func TestClusterService_CreateCluster(t *testing.T) {
 						nico.OrgID == orgID &&
 						c.PodCIDR == "10.233.64.0/18" &&
 						c.ServiceCIDR == "10.233.0.0/18" &&
-						c.ControlPlaneVIP == "172.31.1.10"
+						c.LegacyControlPlaneVIP == "172.31.1.10"
 				})).Return(forgeDBCluster(db.Cluster{
-					ID:              clusterID,
-					Name:            "test-cluster",
-					PodCIDR:         "10.233.64.0/18",
-					ServiceCIDR:     "10.233.0.0/18",
-					ControlPlaneVIP: "172.31.1.10",
+					ID:                    clusterID,
+					Name:                  "test-cluster",
+					PodCIDR:               "10.233.64.0/18",
+					ServiceCIDR:           "10.233.0.0/18",
+					LegacyControlPlaneVIP: "172.31.1.10",
 					Nico: &db.NicoClusterProvider{
 						OrgID:  orgID,
 						SiteID: siteID,
@@ -314,7 +326,7 @@ func TestClusterService_CreateCluster(t *testing.T) {
 				tx.On("CreateWorkflowOutboxEntry", mock.Anything, "ProvisionNodePool", mock.Anything, mock.Anything).
 					Return(db.WorkflowOutbox{}, nil)
 
-				expectControlPlaneConfigCreate(tx, clusterID)
+				expectControlPlaneConfigCreateWithLoadBalancer(tx, clusterID, &db.LoadBalancer{KubeVIP: &db.KubeVIPLoadBalancer{VIP: "172.31.1.10"}})
 			},
 			responseStatus: http.StatusCreated,
 		},
@@ -351,7 +363,7 @@ func TestClusterService_CreateCluster(t *testing.T) {
 						nico.OrgID == orgID &&
 						c.PodCIDR == "192.168.0.0/16" &&
 						c.ServiceCIDR == "10.96.0.0/12" &&
-						c.ControlPlaneVIP == ""
+						c.LegacyControlPlaneVIP == ""
 				})).Return(forgeDBCluster(db.Cluster{
 					ID:          clusterID,
 					Name:        "test-cluster-vpc",
@@ -588,7 +600,7 @@ func TestClusterService_CreateClusterRejectsControlPlaneVIPOverlap(t *testing.T)
 
 	badRequest, ok := resp.(api.CreateCluster400JSONResponse)
 	require.True(t, ok, "expected CreateCluster400JSONResponse, got %T", resp)
-	assert.Contains(t, badRequest.Message, "controlPlaneVIP")
+	assert.Contains(t, badRequest.Message, "control-plane endpoint")
 	assert.Contains(t, badRequest.Message, "network.podCIDR")
 	mockDB.AssertNotCalled(t, "RunInTx", mock.Anything, mock.Anything)
 }
@@ -668,14 +680,14 @@ func TestClusterService_GetCluster(t *testing.T) {
 			name:      "success",
 			clusterID: clusterID,
 			dbCluster: forgeDBCluster(db.Cluster{
-				ID:                clusterID,
-				Name:              "test-cluster",
-				CniPlugin:         "calico",
-				KubernetesVersion: "1.29.0",
-				ControlPlaneVIP:   "10.0.0.1",
-				PodCIDR:           "192.168.0.0/16",
-				ServiceCIDR:       "10.96.0.0/12",
-				Conditions:        mockDBClusterConditions(now),
+				ID:                 clusterID,
+				Name:               "test-cluster",
+				CniPlugin:          "calico",
+				KubernetesVersion:  "1.29.0",
+				ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.1"),
+				PodCIDR:            "192.168.0.0/16",
+				ServiceCIDR:        "10.96.0.0/12",
+				Conditions:         mockDBClusterConditions(now),
 				Nico: &db.NicoClusterProvider{
 					OrgID:  testOrgID,
 					SiteID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
@@ -695,7 +707,7 @@ func TestClusterService_GetCluster(t *testing.T) {
 				ControlPlaneVIP:               func() *string { s := "10.0.0.1"; return &s }(),
 				EnableCPNodeRecycling:         func() *bool { b := false; return &b }(),
 				TeleportEnabled:               func() *bool { b := false; return &b }(),
-				ControlPlaneConfig:            defaultAPIControlPlaneConfig(),
+				ControlPlaneConfig:            apiControlPlaneConfigWithKubeVIP("10.0.0.1"),
 				Network: api.ClusterNetwork{
 					PodCIDR:     "192.168.0.0/16",
 					ServiceCIDR: "10.96.0.0/12",
@@ -766,11 +778,11 @@ func TestClusterService_DeleteCluster(t *testing.T) {
 			name:      "success",
 			clusterID: clusterID,
 			dbCluster: db.Cluster{
-				ID:                clusterID,
-				Name:              "test-cluster",
-				CniPlugin:         "calico",
-				KubernetesVersion: "1.29.0",
-				ControlPlaneVIP:   "10.0.0.1",
+				ID:                 clusterID,
+				Name:               "test-cluster",
+				CniPlugin:          "calico",
+				KubernetesVersion:  "1.29.0",
+				ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.1"),
 				Nico: &db.NicoClusterProvider{
 					OrgID:  testOrgID,
 					SiteID: uuid.MustParse("550e8400-e29b-41d4-a716-446655440001"),
@@ -898,6 +910,15 @@ func defaultAPIControlPlaneConfig() *api.ControlPlaneConfig {
 		ProvisioningMonitorDisabled: &provisioningMonitorDisabled,
 		TeleportEnabled:             &teleportEnabled,
 	}
+}
+
+// apiControlPlaneConfigWithKubeVIP is defaultAPIControlPlaneConfig for a cluster
+// whose only endpoint record is the deprecated control_plane_vip column. Its
+// config reports that address as loadBalancer.kubeVIP.
+func apiControlPlaneConfigWithKubeVIP(vip string) *api.ControlPlaneConfig {
+	config := defaultAPIControlPlaneConfig()
+	config.LoadBalancer = &api.LoadBalancer{KubeVIP: &api.KubeVIPLoadBalancer{Vip: vip}}
+	return config
 }
 
 func mockDBClusterConditions(now time.Time) db.ClusterConditions {
@@ -1793,12 +1814,12 @@ func TestClusterService_UpdateCluster_ControlPlaneConfig_CreatesSnapshotOnVersio
 	mockDB.MockTx.On("GetClusterForUpdate", mock.Anything, clusterID).Return(db.Cluster{
 		ID:                clusterID,
 		KubernetesVersion: "1.30.0",
-		ControlPlaneVIP:   "172.31.0.10",
 		ProviderType:      db.ProviderTypeCAPI,
 		ControlPlaneConfig: db.ControlPlaneConfig{
 			ConfigurationID: oldCfgID,
 			ControlPlaneConfigSpec: db.ControlPlaneConfigSpec{
 				KubernetesVersion: "1.30.0",
+				LoadBalancer:      &db.LoadBalancer{KubeVIP: &db.KubeVIPLoadBalancer{VIP: "172.31.0.10"}},
 			},
 		},
 	}, nil).Once()
@@ -1869,10 +1890,10 @@ func TestClusterService_UpdateCluster_RejectsVersionChangeWhileUpgrading(t *test
 	mockDB := &mockDB{MockTx: &mockTx{}}
 	mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil).Once()
 	mockDB.MockTx.On("GetClusterForUpdate", mock.Anything, clusterID).Return(db.Cluster{
-		ID:                clusterID,
-		KubernetesVersion: "1.37.2",
-		ControlPlaneVIP:   "172.31.0.10",
-		ProviderType:      db.ProviderTypeCAPI,
+		ID:                 clusterID,
+		KubernetesVersion:  "1.37.2",
+		ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("172.31.0.10"),
+		ProviderType:       db.ProviderTypeCAPI,
 		Conditions: db.ClusterConditions{
 			ControlPlaneUpgrading: db.NewCondition(true, "upgrading control plane to 1.37.2"),
 		},

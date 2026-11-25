@@ -412,6 +412,152 @@ func TestBuildNicoRequestNodePools(t *testing.T) {
 	assertBootstrapSuccessCommands(t, pools[1].Infra.PreKubeadmCommands)
 }
 
+func TestUnit_ApplyLoadBalancerKubeVIP(t *testing.T) {
+	const vip = "172.31.0.10"
+	withConfig := func() *api.CreateClusterRequest {
+		return &api.CreateClusterRequest{
+			ControlPlaneVIP:    vip,
+			ControlPlaneConfig: &api.CreateClusterControlPlaneConfig{DesiredCount: 1},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		req          *api.CreateClusterRequest
+		controlPlane ControlPlane
+		wantVIP      string
+		wantKubeVIP  string
+	}{
+		{
+			name:         "flag off keeps the deprecated top-level VIP",
+			req:          withConfig(),
+			controlPlane: ControlPlane{ControlPlaneVIP: vip},
+			wantVIP:      vip,
+		},
+		{
+			name:         "flag on with a VIP moves it into loadBalancer.kubeVIP",
+			req:          withConfig(),
+			controlPlane: ControlPlane{ControlPlaneVIP: vip, LoadBalancerKubeVIP: true},
+			wantKubeVIP:  vip,
+		},
+		{
+			name: "flag on without a VIP changes nothing",
+			req: &api.CreateClusterRequest{
+				ControlPlaneConfig: &api.CreateClusterControlPlaneConfig{DesiredCount: 1},
+			},
+			controlPlane: ControlPlane{LoadBalancerKubeVIP: true},
+		},
+		{
+			name:         "flag on without a control-plane config keeps the top-level VIP",
+			req:          &api.CreateClusterRequest{ControlPlaneVIP: vip},
+			controlPlane: ControlPlane{ControlPlaneVIP: vip, LoadBalancerKubeVIP: true},
+			wantVIP:      vip,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyLoadBalancerKubeVIP(tt.req, tt.controlPlane)
+			require.Equal(t, tt.wantVIP, tt.req.ControlPlaneVIP)
+			if tt.wantKubeVIP == "" {
+				if tt.req.ControlPlaneConfig != nil {
+					require.Nil(t, tt.req.ControlPlaneConfig.LoadBalancer)
+				}
+				return
+			}
+			loadBalancer := tt.req.ControlPlaneConfig.LoadBalancer
+			require.NotNil(t, loadBalancer)
+			require.NotNil(t, loadBalancer.KubeVIP)
+			require.Equal(t, tt.wantKubeVIP, loadBalancer.KubeVIP.Vip)
+			require.Nil(t, loadBalancer.External)
+			require.Nil(t, loadBalancer.FirstMachineIP)
+		})
+	}
+}
+
+// Each builder that sets the control-plane VIP sends it as loadBalancer.kubeVIP
+// when the spec asks, and as the deprecated top-level field otherwise.
+func TestUnit_BuildersSendVIPAsLoadBalancerKubeVIP(t *testing.T) {
+	t.Setenv("NKE_E2E_BUNDLE_SERVER_URL", "http://bundle-mirror/")
+	const vip = "172.31.0.10"
+
+	builders := map[string]func(t *testing.T, loadBalancerKubeVIP bool) api.CreateClusterRequest{
+		"CAPD": func(t *testing.T, loadBalancerKubeVIP bool) api.CreateClusterRequest {
+			req, err := buildCAPDRequest(ClusterSpec{
+				KubernetesVersion: "1.34.2",
+				CAPDNodeImage:     "node-image:local",
+				ControlPlane: ControlPlane{
+					ControlPlaneVIP:     vip,
+					LoadBalancerKubeVIP: loadBalancerKubeVIP,
+					Config:              &ControlPlaneConfigSpec{DesiredCount: 1},
+				},
+			})
+			require.NoError(t, err)
+			return req
+		},
+		"NICo VMs": func(t *testing.T, loadBalancerKubeVIP bool) api.CreateClusterRequest {
+			req, err := buildNicoVMSRequest(ClusterSpec{
+				Name:              "nico-vms-lb",
+				Backend:           BackendNicoVMS,
+				KubernetesVersion: "1.34.2",
+				CNIPlugin:         "ovn-kubernetes",
+				OrgID:             "org-1",
+				SiteID:            "a1b2c3d4-0001-4000-8000-000000000001",
+				VpcID:             "a1b2c3d4-0002-4000-8000-000000000001",
+				ControlPlane: ControlPlane{
+					ControlPlaneVIP:     vip,
+					LoadBalancerKubeVIP: loadBalancerKubeVIP,
+					Config: &ControlPlaneConfigSpec{
+						DesiredCount:         1,
+						InstanceTypeID:       "a1b2c3d4-0005-4000-8000-000000000003",
+						Release:              "nvke-nico-vms-24.04-amd64-fde",
+						ConfigProfile:        "nico-vms-cp",
+						VpcPrefixIDs:         []string{"a1b2c3d4-0004-4000-8000-000000000001"},
+						SSHKeyGroupIDs:       []string{"a1b2c3d4-0006-4000-8000-000000000001"},
+						SystemReservedMemory: "1Gi",
+					},
+				},
+			})
+			require.NoError(t, err)
+			return req
+		},
+		"NICo": func(t *testing.T, loadBalancerKubeVIP bool) api.CreateClusterRequest {
+			req, err := buildNicoRequest(ClusterSpec{
+				Name:   "nico-lb",
+				SiteID: uuid.NewString(),
+				VpcID:  uuid.NewString(),
+				ControlPlane: ControlPlane{
+					ControlPlaneVIP:     vip,
+					LoadBalancerKubeVIP: loadBalancerKubeVIP,
+					Config: &ControlPlaneConfigSpec{
+						DesiredCount:   1,
+						InstanceTypeID: uuid.NewString(),
+						VpcPrefixIDs:   []string{uuid.NewString()},
+					},
+				},
+			})
+			require.NoError(t, err)
+			return req
+		},
+	}
+
+	for name, build := range builders {
+		t.Run(name+"/loadBalancer.kubeVIP", func(t *testing.T) {
+			req := build(t, true)
+			require.Empty(t, req.ControlPlaneVIP, "the deprecated top-level VIP must not be sent")
+			require.NotNil(t, req.ControlPlaneConfig)
+			require.NotNil(t, req.ControlPlaneConfig.LoadBalancer)
+			require.NotNil(t, req.ControlPlaneConfig.LoadBalancer.KubeVIP)
+			require.Equal(t, vip, req.ControlPlaneConfig.LoadBalancer.KubeVIP.Vip)
+		})
+		t.Run(name+"/deprecated top-level VIP", func(t *testing.T) {
+			req := build(t, false)
+			require.Equal(t, vip, req.ControlPlaneVIP)
+			require.NotNil(t, req.ControlPlaneConfig)
+			require.Nil(t, req.ControlPlaneConfig.LoadBalancer)
+		})
+	}
+}
+
 func TestBuildNicoNodePoolInterfaces(t *testing.T) {
 	subnetA, subnetB := uuid.NewString(), uuid.NewString()
 	prefix := uuid.NewString()

@@ -104,7 +104,7 @@ func TestClusterService_UpdateCluster_UpgradeWithoutVIP(t *testing.T) {
 			} else {
 				badRequest, ok := resp.(api.UpdateCluster400JSONResponse)
 				require.True(t, ok, "expected UpdateCluster400JSONResponse, got %T", resp)
-				assert.Contains(t, badRequest.Message, "controlPlaneVIP")
+				assert.Contains(t, badRequest.Message, "an API endpoint is required")
 				mockDB.MockTx.AssertNotCalled(t, "UpdateCluster", mock.Anything, mock.Anything)
 			}
 		})

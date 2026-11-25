@@ -28,7 +28,8 @@ var (
 	ErrLastJoinedControlPlaneNodePool = errors.New("cannot delete the last joined control-plane node pool; delete the cluster instead")
 	// ErrControlPlaneVIPRequired is returned when deleting a control-plane node
 	// would make the controller replace it without a stable API endpoint.
-	ErrControlPlaneVIPRequired = errors.New("controlPlaneVIP is required to replace a control-plane node; recreate the cluster with controlPlaneVIP configured")
+	ErrControlPlaneVIPRequired = errors.New("an API endpoint is required to replace a control-plane node; " +
+		"recreate the cluster with controlPlaneConfig.loadBalancer.kubeVIP or controlPlaneConfig.loadBalancer.external configured")
 	// ErrNodePoolDeleting is returned when node-pool teardown is already in
 	// progress; callers should treat the request as a no-op success.
 	ErrNodePoolDeleting = errors.New("node pool is deleting")
@@ -87,7 +88,7 @@ func guardLiveNodeDelete(ctx context.Context, tx db.Tx, nodeID uuid.UUID, allowW
 		if db.ControlPlaneMutationBlocked(cluster) {
 			return db.Node{}, db.ErrControlPlaneMutationBlocked
 		}
-		if !allowWithoutVIP && strings.TrimSpace(cluster.ControlPlaneVIP) == "" {
+		if !allowWithoutVIP && strings.TrimSpace(cluster.APIEndpoint()) == "" {
 			return db.Node{}, ErrControlPlaneVIPRequired
 		}
 		if err := ensureSurvivingJoinedControlPlane(ctx, tx, dbNode.ClusterID, liveControlPlaneDeleteExclusion{

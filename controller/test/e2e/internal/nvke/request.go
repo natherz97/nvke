@@ -71,6 +71,12 @@ type ControlPlane struct {
 	EtcdEncrypted   bool
 	ControlPlaneVIP string
 
+	// LoadBalancerKubeVIP sends ControlPlaneVIP as
+	// controlPlaneConfig.loadBalancer.kubeVIP.vip instead of the deprecated
+	// top-level controlPlaneVIP. It needs a control-plane Config and a non-empty
+	// ControlPlaneVIP, and does nothing otherwise.
+	LoadBalancerKubeVIP bool
+
 	// Config, when non-nil, provisions the control plane through the cluster-level
 	// control-plane controller (CreateClusterControlPlaneConfig) with no
 	// control-plane node pool. It is mutually exclusive with Pools.
@@ -375,6 +381,7 @@ func buildCAPNicoRequest(spec ClusterSpec, payloads func(controlPlane bool) Node
 		}
 		req.ControlPlaneConfig = cfg
 	}
+	applyLoadBalancerKubeVIP(&req, spec.ControlPlane)
 
 	return req, nil
 }
@@ -556,6 +563,7 @@ func buildCAPDRequest(spec ClusterSpec) (api.CreateClusterRequest, error) {
 		}
 		req.ControlPlaneConfig = cfg
 	}
+	applyLoadBalancerKubeVIP(&req, spec.ControlPlane)
 
 	return req, nil
 }
@@ -680,6 +688,7 @@ func buildNicoVMSRequest(spec ClusterSpec) (api.CreateClusterRequest, error) {
 		}
 		req.ControlPlaneConfig = cfg
 	}
+	applyLoadBalancerKubeVIP(&req, spec.ControlPlane)
 
 	return req, nil
 }
@@ -727,6 +736,20 @@ func buildNicoVMSControlPlaneConfig(spec ClusterSpec) (*api.CreateClusterControl
 		TeleportEnabled:      &teleportDisabled,
 		NodeLabels:           cp.NodeLabels,
 	}, nil
+}
+
+// applyLoadBalancerKubeVIP moves the control-plane VIP from the deprecated
+// top-level controlPlaneVIP into controlPlaneConfig.loadBalancer.kubeVIP.vip when
+// the spec asks for it. The request is left unchanged when the spec does not ask,
+// has no VIP, or the request has no control-plane config to carry it.
+func applyLoadBalancerKubeVIP(req *api.CreateClusterRequest, controlPlane ControlPlane) {
+	if !controlPlane.LoadBalancerKubeVIP || controlPlane.ControlPlaneVIP == "" || req.ControlPlaneConfig == nil {
+		return
+	}
+	req.ControlPlaneVIP = ""
+	req.ControlPlaneConfig.LoadBalancer = &api.LoadBalancer{
+		KubeVIP: &api.KubeVIPLoadBalancer{Vip: controlPlane.ControlPlaneVIP},
+	}
 }
 
 func applyNetworkConfig(req *api.CreateClusterRequest, spec *ClusterNetworkSpec) {

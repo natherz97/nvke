@@ -87,10 +87,10 @@ func TestRenewalFencesControlPlaneNodeDelete(t *testing.T) {
 			}
 			t.Run(string(owner)+"/"+name, func(t *testing.T) {
 				cluster := db.Cluster{
-					ID:              uuid.New(),
-					Name:            "tenant",
-					ControlPlaneVIP: "10.0.0.100",
-					Conditions:      db.ClusterConditions{UpdateInProgress: &db.UpdateInProgress{Type: owner}},
+					ID:                 uuid.New(),
+					Name:               "tenant",
+					ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.100"),
+					Conditions:         db.ClusterConditions{UpdateInProgress: &db.UpdateInProgress{Type: owner}},
 				}
 				node := db.Node{ID: uuid.New(), ClusterID: cluster.ID, Name: "node", ControlPlane: controlPlane}
 				tx := &testutil.MockTx{}

@@ -242,10 +242,10 @@ func expectEtcdEncryptionPreparation(
 		&rollouttemporal.LoadClusterForRolloutRequest{ClusterID: clusterID}).
 		Return(&rollouttemporal.LoadClusterForRolloutResponse{
 			Cluster: db.Cluster{
-				ID:                clusterID,
-				Name:              "tenant-a",
-				KubernetesVersion: "v1.31.9",
-				ControlPlaneVIP:   "10.0.0.1",
+				ID:                 clusterID,
+				Name:               "tenant-a",
+				KubernetesVersion:  "v1.31.9",
+				ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.1"),
 			},
 			Nodes:         []db.Node{node},
 			CPNodes:       []db.Node{node},

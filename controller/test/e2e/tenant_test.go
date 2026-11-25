@@ -210,6 +210,19 @@ var _ = DescribeTableSubtree("NVKE with backend", withNicoVMSReleaseEntries(
 		options:  nvke.Options{Provision: 10 * time.Minute, Delete: 5 * time.Minute, Poll: 5 * time.Second},
 		validate: validations{provisioningOnly: true, controlPlaneController: true, noVIPControllerScale: true, noVIPUpgrade: true},
 	}),
+	// The same single-node cluster with a kube-vip VIP, sent as
+	// controlPlaneConfig.loadBalancer.kubeVIP.vip instead of the deprecated
+	// top-level controlPlaneVIP. It exercises the request, the stored config and
+	// the ConfigureKubeVip step that reads it back.
+	Entry("CAPD control-plane controller with loadBalancer.kubeVIP", Ordered, ContinueOnFailure, Label("capd", "cp-controller", "load-balancer"), testSpec{
+		buildSpec: capdControlPlaneControllerSpec,
+		shape: clusterShape{
+			controlPlaneConfig:  &nvke.ControlPlaneConfigSpec{DesiredCount: 1},
+			loadBalancerKubeVIP: true,
+		},
+		options:  nvke.Options{Provision: 10 * time.Minute, Delete: 5 * time.Minute, Poll: 5 * time.Second},
+		validate: validations{provisioningOnly: true, controlPlaneController: true, loadBalancerKubeVIP: true},
+	}),
 	// A worker-only advertised domain leaves the controller with no eligible
 	// control-plane placement. Keep this as a separate cluster so the spread and
 	// rolling-update row above retains its two eligible domains.
@@ -729,6 +742,9 @@ func tenantSubtree(resolve managementResolver) func(spec testSpec) {
 			if spec.validate.noVIPUpgrade {
 				validateNoVIPUpgradeRefused(&test)
 			}
+			if spec.validate.loadBalancerKubeVIP {
+				validateLoadBalancerKubeVIP(&test)
+			}
 			if spec.validate.controlPlaneControllerRollingUpdate {
 				validateControllerManagedControlPlaneRollingUpdate(&test)
 				if spec.validate.controlPlaneNodeLabels {
@@ -924,6 +940,10 @@ type clusterShape struct {
 	controlPlaneVIP   string
 	// withoutControlPlaneVIP suppresses automatic VIP allocation.
 	withoutControlPlaneVIP bool
+	// loadBalancerKubeVIP sends the control-plane VIP as
+	// controlPlaneConfig.loadBalancer.kubeVIP.vip instead of the deprecated
+	// top-level controlPlaneVIP. It applies to the backends that allocate a VIP.
+	loadBalancerKubeVIP bool
 	// controlPlaneConfig describes the control plane. It is the only control-plane
 	// shape new clusters support: every backend provisions it through the
 	// cluster-level control-plane controller, with no control-plane node pool. The
@@ -1006,6 +1026,10 @@ type validations struct {
 	// The noVIP flags add rejection checks to single-node no-VIP rows.
 	noVIPControllerScale bool
 	noVIPUpgrade         bool
+	// loadBalancerKubeVIP asserts a cluster created with
+	// controlPlaneConfig.loadBalancer.kubeVIP reports the endpoint both ways and
+	// runs kube-vip. Pair it with clusterShape.loadBalancerKubeVIP.
+	loadBalancerKubeVIP bool
 	// controlPlaneControllerRollingUpdate PATCHes the cluster-level
 	// controlPlaneConfig with a new config profile to bump the control-plane
 	// configuration revision and asserts the controller-managed control-plane
@@ -1498,9 +1522,10 @@ func capdSpec(cfg config.Config, name string, shape clusterShape) nvke.ClusterSp
 		CAPDNodeImage:     cfg.Cluster.CAPDNodeImage,
 		SiteID:            uuid.Nil.String(),
 		ControlPlane: nvke.ControlPlane{
-			EtcdEncrypted:   shape.etcdEncrypted,
-			ControlPlaneVIP: shape.controlPlaneVIP,
-			Config:          capdControlPlaneConfig(shape.controlPlaneConfig),
+			EtcdEncrypted:       shape.etcdEncrypted,
+			ControlPlaneVIP:     shape.controlPlaneVIP,
+			LoadBalancerKubeVIP: shape.loadBalancerKubeVIP,
+			Config:              capdControlPlaneConfig(shape.controlPlaneConfig),
 		},
 		Workers: capdNodePoolSpecs(shape.workerPools, "worker", "w"),
 	}
@@ -1791,9 +1816,10 @@ func nicoSpec(_ config.Config, name string, shape clusterShape) nvke.ClusterSpec
 		SiteID:            nicoSiteID,
 		VpcID:             nicoVpcID,
 		ControlPlane: nvke.ControlPlane{
-			EtcdEncrypted:   shape.etcdEncrypted,
-			ControlPlaneVIP: shape.controlPlaneVIP,
-			Config:          nicoControlPlaneConfig(shape.controlPlaneConfig),
+			EtcdEncrypted:       shape.etcdEncrypted,
+			ControlPlaneVIP:     shape.controlPlaneVIP,
+			LoadBalancerKubeVIP: shape.loadBalancerKubeVIP,
+			Config:              nicoControlPlaneConfig(shape.controlPlaneConfig),
 		},
 		Workers: nicoNodePoolSpecs(shape.workerPools, "worker", "w"),
 	}
@@ -2062,9 +2088,10 @@ func nicoVMSSpec(_ config.Config, name string, shape clusterShape) nvke.ClusterS
 		VpcID:     nicoVMSVpcID,
 		Network:   &nvke.ClusterNetworkSpec{PodCIDR: nicoVMSPodCIDR},
 		ControlPlane: nvke.ControlPlane{
-			ControlPlaneVIP: shape.controlPlaneVIP,
-			EtcdEncrypted:   shape.etcdEncrypted,
-			Config:          nicoVMSControlPlaneConfig(shape.controlPlaneConfig),
+			ControlPlaneVIP:     shape.controlPlaneVIP,
+			EtcdEncrypted:       shape.etcdEncrypted,
+			LoadBalancerKubeVIP: shape.loadBalancerKubeVIP,
+			Config:              nicoVMSControlPlaneConfig(shape.controlPlaneConfig),
 		},
 		Workers: nicoVMSNodePoolSpecs(shape.workerPools, "worker", "w", nicoVMSRelease, nicoVMSWConfigProfile),
 	}

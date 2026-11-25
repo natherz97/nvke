@@ -251,9 +251,9 @@ func TestResolvedClusterNetworkValidateControlPlaneVIP(t *testing.T) {
 	require.NoError(t, err)
 
 	require.ErrorContains(t, network.validateControlPlaneVIP("2001:db8::1"), "IPv4")
-	require.ErrorContains(t, network.validateControlPlaneVIP("10.233.64.10"), "controlPlaneVIP")
+	require.ErrorContains(t, network.validateControlPlaneVIP("10.233.64.10"), "control-plane endpoint")
 	require.ErrorContains(t, network.validateControlPlaneVIP("10.233.64.10"), "network.podCIDR")
-	require.ErrorContains(t, network.validateControlPlaneVIP("10.233.0.10"), "controlPlaneVIP")
+	require.ErrorContains(t, network.validateControlPlaneVIP("10.233.0.10"), "control-plane endpoint")
 	require.ErrorContains(t, network.validateControlPlaneVIP("10.233.0.10"), "network.serviceCIDR")
 	assert.NoError(t, network.validateControlPlaneVIP("172.31.0.10"))
 }

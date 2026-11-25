@@ -87,8 +87,9 @@ func (a *Activities) configureKubeVip(ctx context.Context, input ConfigureKubeVi
 		return ConfigureKubeVipResult{}, nil
 	}
 
-	if cluster.ControlPlaneVIP == "" {
-		// No control plane VIP, so we don't need to configure KubeVip
+	if !cluster.KubeVIPManaged() {
+		// NVKE does not run kube-vip here: there is no VIP, or the load balancer
+		// is external or firstMachineIP.
 		return ConfigureKubeVipResult{}, nil
 	}
 
@@ -124,7 +125,7 @@ func (a *Activities) configureKubeVip(ctx context.Context, input ConfigureKubeVi
 
 	logger.Info("Configuring kube-vip on control plane node",
 		"clusterID", cluster.ID,
-		"controlPlaneVIP", cluster.ControlPlaneVIP,
+		"controlPlaneVIP", cluster.APIEndpoint(),
 		"nodeID", node.ID,
 		"nodeIP", node.IP,
 		"kubeVipASN", kubeVipASN,
@@ -136,7 +137,7 @@ func (a *Activities) configureKubeVip(ctx context.Context, input ConfigureKubeVi
 	heartbeatCancel := startActivityHeartbeat(ctx)
 	defer heartbeatCancel()
 	reconcileResponse, err := a.nodeAgentClient.ReconcileKubeVip(ctx, node, &nvkeproto.ReconcileKubeVipRequest{
-		VipAddress:       cluster.ControlPlaneVIP,
+		VipAddress:       cluster.APIEndpoint(),
 		BgpAsn:           kubeVipASN,
 		NodeIp:           node.IP,
 		BgpPeerAsnSource: bgpPeerASNSource,
@@ -198,7 +199,7 @@ func (a *Activities) configureKubeVip(ctx context.Context, input ConfigureKubeVi
 		HostID:      hostID,
 		RunbookName: configureKubeVipRunbookName,
 		RunbookEnv: map[string]string{
-			"VIP_ADDRESS":   cluster.ControlPlaneVIP,
+			"VIP_ADDRESS":   cluster.APIEndpoint(),
 			"BGP_AS":        fmt.Sprintf("%d", kubeVipASN),
 			"BGP_PEER_AS":   bgpPeerAS,
 			"FMDS_ENDPOINT": fmdsEndpoint,

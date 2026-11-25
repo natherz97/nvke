@@ -213,18 +213,21 @@ func isContainedInPrivateAddressSpace(prefix netip.Prefix) bool {
 	return false
 }
 
+// validateControlPlaneVIP checks the control-plane endpoint address, whether it
+// comes from controlPlaneVIP or from controlPlaneConfig.loadBalancer: a valid
+// IPv4 address outside the pod and service CIDRs.
 func (n resolvedClusterNetwork) validateControlPlaneVIP(vip string) error {
 	addr, err := netip.ParseAddr(vip)
 	if err != nil {
-		return fmt.Errorf("invalid controlPlaneVIP %q: %w", vip, err)
+		return fmt.Errorf("invalid control-plane endpoint %q: %w", vip, err)
 	}
 	if !addr.Is4() {
-		return fmt.Errorf("invalid controlPlaneVIP %q: must be an IPv4 address", vip)
+		return fmt.Errorf("invalid control-plane endpoint %q: must be an IPv4 address", vip)
 	}
 	for _, podPrefix := range n.podCIDRPrefixes {
 		if podPrefix.Contains(addr) {
 			return newBadRequestErrorf(
-				"controlPlaneVIP %q overlaps %s %q",
+				"control-plane endpoint %q overlaps %s %q",
 				vip,
 				"network.podCIDR",
 				podPrefix,
@@ -233,7 +236,7 @@ func (n resolvedClusterNetwork) validateControlPlaneVIP(vip string) error {
 	}
 	if n.serviceCIDR.Contains(addr) {
 		return newBadRequestErrorf(
-			"controlPlaneVIP %q overlaps %s %q",
+			"control-plane endpoint %q overlaps %s %q",
 			vip,
 			"network.serviceCIDR",
 			n.serviceCIDR,

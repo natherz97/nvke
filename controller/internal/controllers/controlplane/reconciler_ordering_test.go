@@ -51,13 +51,12 @@ func TestReconcileEndsThePassWhenRemediationRecordsADelete(t *testing.T) {
 		ID:                    clusterID,
 		Name:                  "cp-remediation-ordering",
 		KubernetesVersion:     currentSpec.KubernetesVersion,
-		ControlPlaneVIP:       "10.0.0.100",
 		EnableCPNodeRecycling: true,
 		ControlPlaneConfig: db.ControlPlaneConfig{
 			ConfigurationID:        currentConfigID,
 			DesiredCount:           3,
 			MaxSurge:               1,
-			ControlPlaneConfigSpec: currentSpec,
+			ControlPlaneConfigSpec: testutil.WithKubeVIP(currentSpec, "10.0.0.100"),
 		},
 	}
 	cluster.SetNicoProvider(db.NicoClusterProvider{OrgID: "test-org", SiteID: uuid.New(), VpcID: uuid.New()})

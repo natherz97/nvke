@@ -36,8 +36,8 @@ func TestConfigureKubeVip_BGPPEERASNFromProvider(t *testing.T) {
 	}{
 		"CAPI pool without Nico payload uses default ASN": {
 			cluster: db.Cluster{
-				ProviderType:    db.ProviderTypeCAPI,
-				ControlPlaneVIP: "10.0.0.10",
+				ProviderType:       db.ProviderTypeCAPI,
+				ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.10"),
 			},
 			nodePool: db.NodePool{
 				ControlPlane: true,
@@ -47,7 +47,7 @@ func TestConfigureKubeVip_BGPPEERASNFromProvider(t *testing.T) {
 			wantASN:    4294967000,
 		},
 		"CAPI pool uses configured ASNs": {
-			cluster:  db.Cluster{ProviderType: db.ProviderTypeCAPI, ControlPlaneVIP: "10.0.0.10"},
+			cluster:  db.Cluster{ProviderType: db.ProviderTypeCAPI, ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.10")},
 			nodePool: db.NodePool{ControlPlane: true, Capi: &db.CAPINodePoolProvider{}},
 			cfg: config.Config{KubeVip: config.KubeVipConfig{
 				LocalASN: 64512, StaticPeerASN: 4200000000,
@@ -57,14 +57,14 @@ func TestConfigureKubeVip_BGPPEERASNFromProvider(t *testing.T) {
 			wantLocalASN: 64512,
 		},
 		"Nico pool without VPC prefixes uses configured peer ASN": {
-			cluster:    db.Cluster{ProviderType: db.ProviderTypeNico, ControlPlaneVIP: "10.0.0.10"},
+			cluster:    db.Cluster{ProviderType: db.ProviderTypeNico, ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.10")},
 			nodePool:   db.NodePool{ControlPlane: true, Nico: &db.NicoNodePoolProvider{}},
 			cfg:        config.Config{KubeVip: config.KubeVipConfig{StaticPeerASN: 65001}},
 			wantSource: nvkeproto.ReconcileKubeVipRequest_BGP_PEER_ASN_SOURCE_STATIC,
 			wantASN:    65001,
 		},
 		"LaunchLayer pool uses configured peer ASN": {
-			cluster:    db.Cluster{ProviderType: db.ProviderTypeLaunchLayer, ControlPlaneVIP: "10.0.0.10"},
+			cluster:    db.Cluster{ProviderType: db.ProviderTypeLaunchLayer, ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.10")},
 			nodePool:   db.NodePool{ControlPlane: true},
 			cfg:        config.Config{KubeVip: config.KubeVipConfig{StaticPeerASN: 65001}},
 			wantSource: nvkeproto.ReconcileKubeVipRequest_BGP_PEER_ASN_SOURCE_STATIC,
@@ -72,8 +72,8 @@ func TestConfigureKubeVip_BGPPEERASNFromProvider(t *testing.T) {
 		},
 		"CAPI pool with site FMDS endpoint uses FMDS ASN": {
 			cluster: db.Cluster{
-				ProviderType:    db.ProviderTypeCAPI,
-				ControlPlaneVIP: "10.0.0.10",
+				ProviderType:       db.ProviderTypeCAPI,
+				ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.10"),
 			},
 			nodePool: db.NodePool{
 				ControlPlane: true,
@@ -90,8 +90,8 @@ func TestConfigureKubeVip_BGPPEERASNFromProvider(t *testing.T) {
 		},
 		"Nico pool with VPC prefix uses FMDS ASN": {
 			cluster: db.Cluster{
-				ProviderType:    db.ProviderTypeNico,
-				ControlPlaneVIP: "10.0.0.10",
+				ProviderType:       db.ProviderTypeNico,
+				ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.10"),
 			},
 			nodePool: db.NodePool{
 				ControlPlane: true,
@@ -224,7 +224,7 @@ func TestConfigureKubeVip_RPCFallbackBoundary(t *testing.T) {
 				ControlPlane: true,
 				IP:           "10.0.0.20",
 			}
-			cluster := db.Cluster{ID: clusterID, ProviderType: db.ProviderTypeCAPI, ControlPlaneVIP: "10.0.0.10"}
+			cluster := db.Cluster{ID: clusterID, ProviderType: db.ProviderTypeCAPI, ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.10")}
 			nodePool := db.NodePool{ID: nodePoolID, ControlPlane: true, Capi: &db.CAPINodePoolProvider{}}
 			mockDB := &testutil.MockDB{}
 			mockDB.On("GetNode", mock.Anything, nodeID).Return(node, nil).Times(2 + len(tt.wantRunbooks))
@@ -288,6 +288,103 @@ func TestConfigureKubeVip_RPCFallbackBoundary(t *testing.T) {
 			}
 			require.Len(t, fakeAgent.ReconcileKubeVipRequests, 1)
 			require.Equal(t, tt.fmdsEndpoint, fakeAgent.ReconcileKubeVipRequests[0].GetFmdsEndpoint())
+			mockDB.AssertExpectations(t)
+		})
+	}
+}
+
+func TestConfigureKubeVip_LoadBalancerSelectsKubeVipManagement(t *testing.T) {
+	t.Parallel()
+
+	// legacyVIP is the deprecated control_plane_vip column. The controller never
+	// reads it, so it must not change whether kube-vip is configured.
+	tests := map[string]struct {
+		legacyVIP    string
+		loadBalancer *db.LoadBalancer
+		wantRuns     bool
+	}{
+		"kubeVIP configures kube-vip": {
+			legacyVIP:    "10.0.0.10",
+			loadBalancer: &db.LoadBalancer{KubeVIP: &db.KubeVIPLoadBalancer{VIP: "10.0.0.10"}},
+			wantRuns:     true,
+		},
+		"kubeVIP configures kube-vip when the column is empty": {
+			loadBalancer: &db.LoadBalancer{KubeVIP: &db.KubeVIPLoadBalancer{VIP: "10.0.0.10"}},
+			wantRuns:     true,
+		},
+		"external skips kube-vip whatever the column holds": {
+			legacyVIP:    "10.0.0.10",
+			loadBalancer: &db.LoadBalancer{External: &db.ExternalLoadBalancer{Host: "10.0.0.10"}},
+		},
+		"firstMachineIP skips kube-vip": {
+			loadBalancer: &db.LoadBalancer{FirstMachineIP: &db.FirstMachineIPLoadBalancer{}},
+		},
+		"a cluster with only the deprecated column skips kube-vip": {
+			legacyVIP: "10.0.0.10",
+		},
+		"no VIP and no load balancer skips kube-vip": {},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			nodeID := uuid.New()
+			nodeSetID := uuid.New()
+			nodePoolID := uuid.New()
+			clusterID := uuid.New()
+			node := db.Node{
+				ID:           nodeID,
+				Name:         "cp-0",
+				ClusterID:    clusterID,
+				NodeSetID:    nodeSetID,
+				NodePoolID:   nodePoolID,
+				ControlPlane: true,
+				IP:           "10.0.0.20",
+			}
+			cluster := db.Cluster{ID: clusterID, ProviderType: db.ProviderTypeCAPI, LegacyControlPlaneVIP: tt.legacyVIP}
+			cluster.ControlPlaneConfig.LoadBalancer = tt.loadBalancer
+			nodePool := db.NodePool{ID: nodePoolID, ControlPlane: true, Capi: &db.CAPINodePoolProvider{}}
+
+			mockDB := &testutil.MockDB{}
+			mockDB.On("GetNode", mock.Anything, nodeID).Return(node, nil).Twice()
+			mockDB.On("GetNodeSet", mock.Anything, nodeSetID).Return(db.NodeSet{ID: nodeSetID, NodePoolID: nodePoolID}, nil)
+			mockDB.On("GetNodePool", mock.Anything, nodePoolID).Return(nodePool, nil)
+			mockDB.On("GetCluster", mock.Anything, clusterID).Return(cluster, nil).Once()
+
+			fakeAgent := &agenttest.FakeClient{
+				ReconcileKubeVipResponse: &nvkeproto.ReconcileKubeVipResponse{
+					Outcome:        nvkeproto.ReconcileKubeVipResponse_OUTCOME_CREATED,
+					ManifestPath:   "/etc/kubernetes/manifests/kube-vip.yaml",
+					BgpInterface:   "eth0",
+					BgpPeerAddress: "10.0.0.1",
+					BgpPeerAsn:     4294967000,
+					KubeconfigPath: "/etc/kubernetes/kube-vip.conf",
+				},
+			}
+
+			a := &Activities{db: mockDB, nodeAgentClient: fakeAgent}
+			testSuite := &testsuite.WorkflowTestSuite{}
+			env := testSuite.NewTestActivityEnvironment()
+			env.RegisterActivity(a.configureKubeVip)
+			value, err := env.ExecuteActivity(a.configureKubeVip, ConfigureKubeVipInput{NodeID: nodeID})
+			require.NoError(t, err)
+			var result ConfigureKubeVipResult
+			require.NoError(t, value.Get(&result))
+
+			if !tt.wantRuns {
+				require.Empty(t, fakeAgent.ReconcileKubeVipRequests, "kube-vip is not managed, so the agent is not called")
+				require.Empty(t, fakeAgent.ExecuteScriptNames, "no legacy runbook either")
+				require.Equal(t, ConfigureKubeVipResult{}, result)
+				mockDB.AssertExpectations(t)
+				return
+			}
+
+			require.Len(t, fakeAgent.ReconcileKubeVipRequests, 1)
+			require.Equal(t, tt.loadBalancer.KubeVIP.VIP, fakeAgent.ReconcileKubeVipRequests[0].GetVipAddress())
+			require.Equal(t, "10.0.0.20", fakeAgent.ReconcileKubeVipRequests[0].GetNodeIp())
+			require.Empty(t, fakeAgent.ExecuteScriptNames, "the typed RPC is used, not the legacy runbook")
+			require.Contains(t, result.ConfigureKubeVipOutput, "OUTCOME_CREATED")
 			mockDB.AssertExpectations(t)
 		})
 	}

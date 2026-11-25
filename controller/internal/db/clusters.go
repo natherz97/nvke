@@ -77,13 +77,18 @@ type LaunchLayerClusterProvider struct {
 }
 
 type Cluster struct {
-	ID                    uuid.UUID  `bun:"type:uuid,pk,default:gen_random_uuid()"`
-	Name                  string     `bun:"type:text,notnull"`
-	CniPlugin             CniPlugin  `bun:"type:text"`
-	CniVersion            string     `bun:"type:text"`
-	EtcdEncrypted         bool       `bun:"type:boolean,notnull,default:false"`
-	KubernetesVersion     string     `bun:"type:text,notnull"`
-	ControlPlaneVIP       string     `bun:"type:text"`
+	ID                uuid.UUID `bun:"type:uuid,pk,default:gen_random_uuid()"`
+	Name              string    `bun:"type:text,notnull"`
+	CniPlugin         CniPlugin `bun:"type:text"`
+	CniVersion        string    `bun:"type:text"`
+	EtcdEncrypted     bool      `bun:"type:boolean,notnull,default:false"`
+	KubernetesVersion string    `bun:"type:text,notnull"`
+	// LegacyControlPlaneVIP is the deprecated control_plane_vip column. It is
+	// written at create and mirrors loadBalancer.kubeVIP.vip, and only that, so an
+	// older controller that reads just this column keeps working after a rollback.
+	// Nothing reads it. Use APIEndpoint and KubeVIPManaged, which read the stored
+	// load balancer.
+	LegacyControlPlaneVIP string     `bun:"control_plane_vip,type:text"`
 	EnableCPNodeRecycling bool       `bun:"type:boolean,notnull,default:false"`
 	TeleportEnabled       bool       `bun:"type:boolean,notnull,default:false"`
 	PodCIDR               string     `bun:"pod_cidr,type:text,notnull,default:'192.168.0.0/16'"`
@@ -114,6 +119,19 @@ type Cluster struct {
 	// SpireServer is the SPIRE server last requested for the cluster's nodes.
 	// Nil means none was requested.
 	SpireServer *ClusterSpireServer `bun:"spire_server,type:jsonb"`
+}
+
+// APIEndpoint returns the cluster's API endpoint address, or an empty string when
+// it has none or uses the first control-plane node's IP. The cluster must have its
+// control-plane config loaded.
+func (c Cluster) APIEndpoint() string {
+	return c.ControlPlaneConfig.ControlPlaneConfigSpec.APIEndpoint()
+}
+
+// KubeVIPManaged reports whether NVKE configures kube-vip for the cluster. The
+// cluster must have its control-plane config loaded.
+func (c Cluster) KubeVIPManaged() bool {
+	return c.ControlPlaneConfig.ControlPlaneConfigSpec.KubeVIPManaged()
 }
 
 // ClusterSpireServer is a SPIRE server address requested for a cluster's
@@ -462,6 +480,8 @@ func preserveClusterControlPlaneOverrides(existing Cluster, merged *ControlPlane
 	// NodeRebalanceDisabled is cluster-level only, same as AutoScaleDownDisabled.
 	merged.NodeRebalanceDisabled = existing.ControlPlaneConfig.NodeRebalanceDisabled
 	merged.ProvisioningMonitorDisabled = existing.ControlPlaneConfig.ProvisioningMonitorDisabled
+	// LoadBalancer is chosen at cluster creation and node pools do not carry it.
+	merged.LoadBalancer = existing.ControlPlaneConfig.LoadBalancer
 
 	// The instance type preference an operator set on the cluster outranks the one
 	// derived from the pools, so it has to survive the merge. Only Nico carries it.

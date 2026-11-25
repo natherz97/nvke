@@ -240,6 +240,15 @@ func (s *clusterService) CreateCluster(ctx context.Context, req api.CreateCluste
 				s.teleportCfg.NodePoolTeleportDefault(true),
 				createdCluster.ProviderType,
 			)
+			// A request that sets only the deprecated controlPlaneVIP is stored as
+			// loadBalancer.kubeVIP with that address, because controlPlaneVIP has
+			// always meant "NVKE runs kube-vip on this VIP". Every cluster then keeps
+			// its endpoint in loadBalancer.
+			loadBalancer, err := effectiveLoadBalancer(req.Body)
+			if err != nil {
+				return fmt.Errorf("failed to resolve the load balancer: %w", err)
+			}
+			spec.LoadBalancer = dbLoadBalancerFromAPI(loadBalancer)
 			if err := db.CreateControlPlaneConfigRowIfChanged(ctx, tx, &createdCluster, spec, db.CreateControlPlaneConfigRowOpts{
 				ChangeReason: "cluster create controlPlaneConfig",
 			}); err != nil {
@@ -320,7 +329,10 @@ func (s *clusterService) preflightCheckCreateClusterRequest(
 	if err := validatePodCIDRCapacity(network.podCIDRPrefixes, desiredNodes, cpSurge); err != nil {
 		return resolvedClusterNetwork{}, newBadRequestErrorf("%s", err)
 	}
-	controlPlaneVIP := strings.TrimSpace(req.ControlPlaneVIP)
+	controlPlaneVIP, err := controlPlaneEndpoint(req)
+	if err != nil {
+		return resolvedClusterNetwork{}, newBadRequestErrorf("%s", err)
+	}
 	if controlPlaneVIP != "" {
 		if err := network.validateControlPlaneVIP(controlPlaneVIP); err != nil {
 			return resolvedClusterNetwork{}, newBadRequestErrorf("%s", err)
@@ -434,6 +446,10 @@ func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClust
 	if err := validateCreateClusterLevelControlPlane(req, nodePools, providerType, s.allowlistedLabelKeys); err != nil {
 		return err
 	}
+	endpointAddress, err := controlPlaneEndpoint(req)
+	if err != nil {
+		return err
+	}
 	controlPlaneSpec := controlPlaneConfigSpecFromCreateAPI(req.ControlPlaneConfig, req.ControlPlaneKubernetesVersion, false, providerType)
 	if err := validateControlPlaneNodeAgentProfile(s.nodeAgentProfile, db.Cluster{ProviderType: providerType}, controlPlaneSpec); err != nil {
 		return err
@@ -451,7 +467,7 @@ func (s *clusterService) ValidateCreateClusterRequestFields(req *api.CreateClust
 	}); err != nil {
 		return fmt.Errorf("controlPlaneConfig: %w", err)
 	}
-	if err := s.validateControlPlaneCapacityChange(req.ControlPlaneVIP, 0, req.ControlPlaneConfig.DesiredCount); err != nil {
+	if err := s.validateControlPlaneCapacityChange(endpointAddress, 0, req.ControlPlaneConfig.DesiredCount); err != nil {
 		return err
 	}
 
@@ -697,7 +713,7 @@ func (s *clusterService) UpdateCluster(ctx context.Context, req api.UpdateCluste
 			if err := ValidateKubernetesVersionSkewWithControlPlane(dbCluster.KubernetesVersion, *req.Body.ControlPlaneKubernetesVersion); err != nil {
 				return err
 			}
-			if err := s.validateControlPlaneUpgrade(dbCluster.ControlPlaneVIP); err != nil {
+			if err := s.validateControlPlaneUpgrade(dbCluster.APIEndpoint()); err != nil {
 				return err
 			}
 
@@ -985,7 +1001,7 @@ func (s *clusterService) applyClusterControlPlaneConfigUpdate(ctx context.Contex
 		}
 	}
 	if err := s.validateControlPlaneRollout(
-		cluster.ControlPlaneVIP,
+		cluster.APIEndpoint(),
 		db.IsControlPlaneRolloutRequired(cluster.ControlPlaneConfig.ControlPlaneConfigSpec, controlPlaneConfigSpec),
 	); err != nil {
 		return err
@@ -1048,7 +1064,7 @@ func (s *clusterService) applyClusterLevelControlPlaneSpecUpdate(
 			return newBadRequestErrorf("controlPlaneConfig.desiredCount must be at least 1")
 		}
 		if err := s.validateControlPlaneCapacityChange(
-			cluster.ControlPlaneVIP,
+			cluster.APIEndpoint(),
 			cluster.ControlPlaneConfig.DesiredCount,
 			*req.DesiredCount,
 		); err != nil {
@@ -1200,6 +1216,7 @@ func apiControlPlaneConfigFromDB(cfg db.ControlPlaneConfig) *api.ControlPlaneCon
 		APIServer:                   apiComponentConfigFromDB(cfg.APIServerExtraArgs),
 		ControllerManager:           apiComponentConfigFromDB(cfg.ControllerManagerExtraArgs),
 		Scheduler:                   apiComponentConfigFromDB(cfg.SchedulerExtraArgs),
+		LoadBalancer:                apiLoadBalancerFromDB(cfg.LoadBalancer),
 	}
 }
 
@@ -1331,9 +1348,12 @@ func (s *clusterService) DeleteCluster(ctx context.Context, req api.DeleteCluste
 }
 
 func APIClusterFromDB(dbCluster *db.Cluster) api.Cluster {
+	// controlPlaneVIP is deprecated and has always meant the VIP NVKE runs kube-vip
+	// for. It repeats the address from controlPlaneConfig.loadBalancer.kubeVIP for
+	// clients that still read it, and is absent for every other kind.
 	var controlPlaneVIP *string
-	if dbCluster.ControlPlaneVIP != "" {
-		controlPlaneVIP = &dbCluster.ControlPlaneVIP
+	if vip := dbCluster.ControlPlaneConfig.LoadBalancer.LegacyControlPlaneVIP(); vip != "" {
+		controlPlaneVIP = &vip
 	}
 	cpNodesRecycling := apiConditionFromDB(dbCluster.Conditions.CPNodesRecycling)
 	controlPlaneUpgrading := apiConditionFromDB(dbCluster.Conditions.ControlPlaneUpgrading)
@@ -1502,15 +1522,21 @@ func DBClusterFromAPI(req *api.CreateClusterRequest) (db.Cluster, error) {
 		enableCPNodeRecycling = *req.EnableCPNodeRecycling
 	}
 	cniPlugin := db.EffectiveCNIPlugin(db.CniPlugin(req.CniPlugin))
-	controlPlaneVIP := strings.TrimSpace(req.ControlPlaneVIP)
+	loadBalancer, err := effectiveLoadBalancer(req)
+	if err != nil {
+		return db.Cluster{}, err
+	}
 
 	cluster := db.Cluster{
-		Name:                  req.Name,
-		CniPlugin:             cniPlugin,
-		CniVersion:            db.EffectiveCNIVersion(cniPlugin, cniVersion),
-		EtcdEncrypted:         req.EtcdEncrypted,
-		KubernetesVersion:     req.ControlPlaneKubernetesVersion,
-		ControlPlaneVIP:       controlPlaneVIP,
+		Name:              req.Name,
+		CniPlugin:         cniPlugin,
+		CniVersion:        db.EffectiveCNIVersion(cniPlugin, cniVersion),
+		EtcdEncrypted:     req.EtcdEncrypted,
+		KubernetesVersion: req.ControlPlaneKubernetesVersion,
+		// The deprecated column mirrors kube-vip only, so an older controller keeps
+		// working after a rollback. The load balancer itself is stored with the
+		// control-plane config.
+		LegacyControlPlaneVIP: dbLoadBalancerFromAPI(loadBalancer).LegacyControlPlaneVIP(),
 		TeleportEnabled:       teleportEnabled,
 		EnableCPNodeRecycling: enableCPNodeRecycling,
 
