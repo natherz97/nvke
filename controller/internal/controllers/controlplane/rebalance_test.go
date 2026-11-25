@@ -28,16 +28,15 @@ func rebalanceCluster(clusterID, configID uuid.UUID, preference []uuid.UUID, reb
 	var spec db.ControlPlaneConfigSpec
 	spec.SetNico(db.NicoControlPlaneProvider{InstanceTypePreference: preference})
 	return db.Cluster{
-		ID:              clusterID,
-		Name:            "test-cluster",
-		ProviderType:    db.ProviderTypeNico,
-		ControlPlaneVIP: "10.0.0.1",
+		ID:           clusterID,
+		Name:         "test-cluster",
+		ProviderType: db.ProviderTypeNico,
 		ControlPlaneConfig: db.ControlPlaneConfig{
 			ConfigurationID:        configID,
 			DesiredCount:           3,
 			AutoScaleDownDisabled:  scaleDownDisabled,
 			NodeRebalanceDisabled:  !rebalanceEnabled,
-			ControlPlaneConfigSpec: spec,
+			ControlPlaneConfigSpec: testutil.WithKubeVIP(spec, "10.0.0.1"),
 		},
 	}
 }
@@ -146,8 +145,7 @@ func TestReconcileControlPlaneRebalance_NoOps(t *testing.T) {
 	// nil ranker is what makes this a no-op, not the flag.
 	capiCluster := db.Cluster{
 		ID: clusterID, Name: "test-cluster", ProviderType: db.ProviderTypeCAPI,
-		ControlPlaneVIP:    "10.0.0.1",
-		ControlPlaneConfig: db.ControlPlaneConfig{ConfigurationID: configID, DesiredCount: 3},
+		ControlPlaneConfig: db.ControlPlaneConfig{ConfigurationID: configID, DesiredCount: 3, ControlPlaneConfigSpec: testutil.WithKubeVIP(db.ControlPlaneConfigSpec{}, "10.0.0.1")},
 	}
 
 	// A less-preferred node exists, but a surge was abandoned for lack of capacity

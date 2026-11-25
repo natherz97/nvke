@@ -423,7 +423,7 @@ func runBootstrapSite(ctx context.Context, out io.Writer, opts *bootstrapSiteOpt
 		if err := requireNoControlPlane(ctx, inv.Cluster.Nodes, opts.dialContext); err != nil {
 			return err
 		}
-	} else if err := requireNoSiteAtVIP(ctx, inv.Cluster.ControlPlaneVIP, opts.dialContext); err != nil {
+	} else if err := requireNoSiteAtVIP(ctx, inv.Cluster.ControlPlaneEndpoint(), opts.dialContext); err != nil {
 		// The VIP is the one address a nico site's control plane is known by
 		// before it exists, and the only thing that tells a second bootstrap of
 		// the same spec from a first.
@@ -1002,7 +1002,7 @@ func requireNoSiteAtVIP(
 		"is most likely already running there, and bootstrapping again would allocate another set of NICo machines and bring "+
 		"up a second control plane advertising the same VIP. If that is your site, do not re-run. If it is a half-built "+
 		"one from a failed bootstrap, release its NICo instances first (see docs/bootstrap-troubleshooting.md), and re-run "+
-		"once the VIP stops answering. If something else holds the address, change cluster.controlPlaneVIP in the site spec",
+		"once the VIP stops answering. If something else holds the address, change it in the site spec (cluster.loadBalancer, or the deprecated cluster.controlPlaneVIP)",
 		vip, kubeAPIServerPort)
 }
 

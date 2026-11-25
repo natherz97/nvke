@@ -231,6 +231,9 @@ type Cluster struct {
 	// It may be empty only for a single-node control plane, which then uses the
 	// initializing node's IP as its fixed endpoint.
 	ControlPlaneVIP string `yaml:"controlPlaneVIP,omitempty"`
+	// LoadBalancer selects how the API endpoint is provided. It replaces
+	// ControlPlaneVIP, which is deprecated, and cannot be combined with it.
+	LoadBalancer *LoadBalancer `yaml:"loadBalancer,omitempty"`
 	// PodCidr is the pod network CIDR. Multiple CIDRs may be given as a
 	// comma-separated string.
 	PodCidr string `yaml:"podCidr"`
@@ -444,6 +447,9 @@ func load(path string, withCA bool, options ...LoadOption) (*SiteSpec, error) {
 
 	var inv SiteSpec
 	if err := v.Unmarshal(&inv, useYAMLTags, decodeTextValues, rejectUnknownFields); err != nil {
+		return nil, fmt.Errorf("site spec file %s: %w", path, err)
+	}
+	if err := applyEmptyLoadBalancerOptions(v, &inv.Cluster); err != nil {
 		return nil, fmt.Errorf("site spec file %s: %w", path, err)
 	}
 	if abs, err := filepath.Abs(path); err == nil {
@@ -869,36 +875,51 @@ func (v *validator) checkCIDR(path, value string, allowList bool) {
 // and validates a configured IPv4 VIP against cluster CIDRs.
 func (v *validator) checkControlPlaneVIP(inv *SiteSpec) {
 	c := inv.Cluster
-	if c.ControlPlaneVIP == "" {
+	if !v.checkLoadBalancer(c) {
+		return
+	}
+
+	endpoint := c.ControlPlaneEndpoint()
+	path := c.controlPlaneEndpointPath()
+	if endpoint == "" {
 		if inv.ControlPlaneCount() > 1 && !v.allowControlPlaneWithoutVIP {
-			v.addf("%s is required when the cluster has more than one control-plane node (%s or %s) because kube-vip provides "+
-				"a stable control-plane endpoint", pathControlPlaneVIP, pathNodes, pathNicoControlPlane+".count")
+			if c.LoadBalancer != nil {
+				v.addf("%s is not allowed when the cluster has more than one control-plane node (%s or %s) because the "+
+					"endpoint is the first node's IP: use %s or %s instead",
+					pathLoadBalancerFirstMachineIP, pathNodes, pathNicoControlPlane+".count",
+					pathLoadBalancerKubeVIPVIP, pathLoadBalancerExternalHost)
+			} else {
+				v.addf("%s (or the deprecated %s) is required when the cluster has more than one control-plane node (%s or %s) "+
+					"because kube-vip provides a stable control-plane endpoint", pathLoadBalancerKubeVIPVIP, pathControlPlaneVIP,
+					pathNodes, pathNicoControlPlane+".count")
+			}
 		}
 		return
 	}
 
-	vip, err := netip.ParseAddr(c.ControlPlaneVIP)
+	vip, err := netip.ParseAddr(endpoint)
 	if err != nil {
-		v.addf("%s %q is not a valid IP address", pathControlPlaneVIP, c.ControlPlaneVIP)
+		v.addf("%s %q is not a valid IP address", path, endpoint)
 		return
 	}
 	// Match the controller's rejection of IPv4-mapped IPv6 addresses.
 	if !vip.Is4() {
-		v.addf("%s %q must be an IPv4 address", pathControlPlaneVIP, c.ControlPlaneVIP)
+		v.addf("%s %q must be an IPv4 address", path, endpoint)
 		return
 	}
-	// The VIP becomes kubeadm's controlPlaneEndpoint and a /32 advertised over
-	// BGP, so the other control-plane nodes have to be able to dial it: not the
-	// unspecified, loopback, multicast, link-local or broadcast forms.
+	// The endpoint becomes kubeadm's controlPlaneEndpoint, and with kube-vip a
+	// /32 advertised over BGP, so the other control-plane nodes have to be able
+	// to dial it: not the unspecified, loopback, multicast, link-local or
+	// broadcast forms.
 	if !vip.IsGlobalUnicast() {
-		v.addf("%s %q must be a routable unicast address", pathControlPlaneVIP, c.ControlPlaneVIP)
+		v.addf("%s %q must be a routable unicast address", path, endpoint)
 		return
 	}
 
 	for _, cidr := range strings.Split(c.PodCidr, ",") {
-		v.checkVIPOutsideCIDR(vip, c.ControlPlaneVIP, pathPodCidr, cidr)
+		v.checkVIPOutsideCIDR(vip, endpoint, path, pathPodCidr, cidr)
 	}
-	v.checkVIPOutsideCIDR(vip, c.ControlPlaneVIP, pathServiceCidr, c.ServiceCidr)
+	v.checkVIPOutsideCIDR(vip, endpoint, path, pathServiceCidr, c.ServiceCidr)
 }
 
 // checkCIDRsDisjoint refuses a pod CIDR that overlaps the service CIDR.
@@ -939,7 +960,7 @@ func parsePrefix(cidr string) (netip.Prefix, bool) {
 	return prefix, true
 }
 
-func (v *validator) checkVIPOutsideCIDR(vip netip.Addr, vipText, path, cidr string) {
+func (v *validator) checkVIPOutsideCIDR(vip netip.Addr, vipText, vipPath, path, cidr string) {
 	cidr = strings.TrimSpace(cidr)
 	if cidr == "" {
 		return
@@ -949,7 +970,7 @@ func (v *validator) checkVIPOutsideCIDR(vip netip.Addr, vipText, path, cidr stri
 		return
 	}
 	if prefix.Contains(vip) {
-		v.addf("%s %q is inside %s %q", pathControlPlaneVIP, vipText, path, cidr)
+		v.addf("%s %q is inside %s %q", vipPath, vipText, path, cidr)
 	}
 }
 
@@ -1023,12 +1044,13 @@ func (inv *SiteSpec) CheckBootstrapMode(disableMTLS bool) error {
 // can build such a site cluster, but render deploy-path needs the VIP to determine
 // the controller endpoint. The VIP cannot be added once the site cluster exists.
 func (inv *SiteSpec) NicoVIPWarning() string {
-	if !inv.IsNico() || inv.Cluster.ControlPlaneVIP != "" {
+	if !inv.IsNico() || inv.Cluster.ControlPlaneEndpoint() != "" {
 		return ""
 	}
-	return pathControlPlaneVIP + " is not set: the bootstrap can build this site cluster, but render deploy-path needs the VIP " +
-		"to determine the controller endpoint. The installed controller's allowControlPlaneWithoutVIP setting does not supply that endpoint. " +
-		"The VIP cannot be added once the site cluster exists; set it before bootstrap if this site will get the controller stack"
+	return "no API endpoint address is set (" + pathLoadBalancerKubeVIPVIP + ", " + pathLoadBalancerExternalHost +
+		" or the deprecated " + pathControlPlaneVIP + "): the bootstrap can build this site cluster, but render deploy-path needs " +
+		"the address to determine the controller endpoint. The installed controller's allowControlPlaneWithoutVIP setting does not supply that endpoint. " +
+		"The address cannot be added once the site cluster exists; set it before bootstrap if this site will get the controller stack"
 }
 
 // checkTrustDomain validates the DNS-name form required for a SPIFFE trust
@@ -1121,16 +1143,18 @@ func (inv *SiteSpec) TrustDomain() (domain string, defaulted bool) {
 // single node, which is why this is checked by the stack install and not
 // when the spec loads.
 func (inv *SiteSpec) ControllerEndpoint() (string, error) {
-	if inv.Cluster.ControlPlaneVIP != "" {
-		return inv.Cluster.ControlPlaneVIP, nil
+	if endpoint := inv.Cluster.ControlPlaneEndpoint(); endpoint != "" {
+		return endpoint, nil
 	}
 	if inv.IsNico() {
-		return "", errors.New("the controller stack install needs cluster.controlPlaneVIP with infra.provider nico: the " +
+		return "", errors.New("the controller stack install needs " + pathLoadBalancerKubeVIPVIP + " or " + pathLoadBalancerExternalHost +
+			" (or the deprecated " + pathControlPlaneVIP + ") with infra.provider nico: the " +
 			"nodes have no address until NICo allocates them, so there is nothing else to reach the controller at " +
 			"(the bootstrap itself does not need it with one node)")
 	}
 	if len(inv.Cluster.Nodes) == 1 {
 		return inv.Cluster.Nodes[0].IP, nil
 	}
-	return "", errors.New("the site spec has several nodes and no cluster.controlPlaneVIP")
+	return "", errors.New("the site spec has several nodes and no API endpoint address (" + pathLoadBalancerKubeVIPVIP + ", " +
+		pathLoadBalancerExternalHost + " or the deprecated " + pathControlPlaneVIP + ")")
 }

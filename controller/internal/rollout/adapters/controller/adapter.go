@@ -86,8 +86,8 @@ func (a *ClusterAdapter) Name() string { return a.cluster.Name }
 
 func (a *ClusterAdapter) KubernetesVersion() string { return a.cluster.KubernetesVersion }
 
-// ControlPlaneVIP returns the cluster's kube-vip control-plane VIP.
-func (a *ClusterAdapter) ControlPlaneVIP() string { return a.cluster.ControlPlaneVIP }
+// ControlPlaneVIP returns the cluster's API endpoint address.
+func (a *ClusterAdapter) ControlPlaneVIP() string { return a.cluster.APIEndpoint() }
 
 func (a *ClusterAdapter) OIDCProviders() []controllerconfig.OIDCProvider {
 	return db.ClusterOIDCProvidersToConfig(a.cluster.OIDCProviders)

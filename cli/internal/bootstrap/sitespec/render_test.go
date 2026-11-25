@@ -467,3 +467,44 @@ func TestBuildUpstreamCA(t *testing.T) {
 		t.Error("--set spire.upstreamCA=maybe was accepted")
 	}
 }
+
+// TestRenderLoadBalancerFromSet: --set reaches the loadBalancer addresses, the
+// rendered file loads back with that endpoint, and combining it with the
+// deprecated controlPlaneVIP is refused.
+func TestRenderLoadBalancerFromSet(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path string
+		get  func(*SiteSpec) string
+	}{
+		{"kubeVIP", "cluster.loadBalancer.kubeVIP.vip", func(s *SiteSpec) string { return s.Cluster.LoadBalancer.KubeVIP.VIP }},
+		{"external", "cluster.loadBalancer.external.host", func(s *SiteSpec) string { return s.Cluster.LoadBalancer.External.Host }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			built, err := Build("my-tier0-site", oneNode(), []string{tc.path + "=10.0.0.100"})
+			if err != nil {
+				t.Fatalf("Build: %v", err)
+			}
+			if got := tc.get(built); got != "10.0.0.100" {
+				t.Errorf("address = %q, want 10.0.0.100", got)
+			}
+			rendered, err := built.Render()
+			if err != nil {
+				t.Fatalf("Render: %v", err)
+			}
+			reloaded, err := decodeBytes(rendered)
+			if err != nil {
+				t.Fatalf("rendered file does not load: %v\n%s", err, rendered)
+			}
+			if got := tc.get(reloaded); got != "10.0.0.100" {
+				t.Errorf("reloaded address = %q, want 10.0.0.100", got)
+			}
+		})
+	}
+
+	_, err := Build("my-tier0-site", oneNode(),
+		[]string{"cluster.loadBalancer.kubeVIP.vip=10.0.0.100", "cluster.controlPlaneVIP=10.0.0.100"})
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Errorf("both fields set: err = %v, want a 'cannot be combined' error", err)
+	}
+}

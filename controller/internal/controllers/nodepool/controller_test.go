@@ -694,8 +694,8 @@ func TestUnit_NodePoolControllerControlPlaneSurgeRequiresVIP(t *testing.T) {
 				return nodeSet.ID == oldNodeSetID && nodeSet.DesiredCount == 0
 			})).Return(oldNodeSet, nil)
 			mockTx.On("GetCluster", mock.Anything, clusterID).Return(db.Cluster{
-				ID:              clusterID,
-				ControlPlaneVIP: tc.controlPlaneVIP,
+				ID:                 clusterID,
+				ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig(tc.controlPlaneVIP),
 			}, nil)
 			updatedCurrentNodeSet := currentNodeSet
 			updatedCurrentNodeSet.DesiredCount = 1
@@ -769,7 +769,7 @@ func TestUnit_NodePoolControllerReplacementRequiresVIP(t *testing.T) {
 					clusterProviderType = db.ProviderTypeCAPI
 				}
 				mockTx.On("GetCluster", mock.Anything, pool.ClusterID).Return(db.Cluster{
-					ID: pool.ClusterID, ProviderType: clusterProviderType, ControlPlaneVIP: tc.vip,
+					ID: pool.ClusterID, ProviderType: clusterProviderType, ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig(tc.vip),
 				}, tc.clusterError).Once()
 				if !tc.bootstrap && tc.clusterError == nil {
 					mockTx.On("GetNodeSet", mock.Anything, current.ID).Return(current, nil)

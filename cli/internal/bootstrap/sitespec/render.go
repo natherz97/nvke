@@ -42,7 +42,7 @@ func deniedPaths() map[string]string {
 // fileOnlyPaths are settable fields with no environment variable: a record of
 // the site that the environment must not override.
 func fileOnlyPaths() []string {
-	return []string{pathSpireUpstreamCA}
+	return []string{pathSpireUpstreamCA, pathLoadBalancerExternalHost, pathLoadBalancerKubeVIPVIP}
 }
 
 // SettablePaths returns the field paths --set accepts, sorted.

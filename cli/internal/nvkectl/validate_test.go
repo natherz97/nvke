@@ -183,7 +183,7 @@ func TestValidateSiteSpec_NicoOneNodeWithoutVIP(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const warning = "warning: cluster.controlPlaneVIP is not set"
+	const warning = "warning: no API endpoint address is set"
 	for _, bootstrapOnly := range []bool{false, true} {
 		var out strings.Builder
 		err := runValidateSiteSpec(&out, &validateSiteSpecOptions{siteSpec: path, bootstrapOnly: bootstrapOnly})

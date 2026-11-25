@@ -604,7 +604,7 @@ func TestRemediateMachinesRecordsIntentUnderTheController(t *testing.T) {
 	t.Parallel()
 
 	clusterID := uuid.New()
-	cluster := db.Cluster{ID: clusterID, Name: "test-cluster", ControlPlaneVIP: "10.0.0.100"}
+	cluster := db.Cluster{ID: clusterID, Name: "test-cluster", ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.100")}
 
 	// Three healthy nodes, one of them marked: enough for canStartRemediation,
 	// and deliberately at the quorum floor so the exemption is exercised.

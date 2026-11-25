@@ -175,7 +175,7 @@ rendered path, after `site-values.yaml`.
 | value | the install takes it from | e2e derivation |
 |---|---|---|
 | trust domain | `spire.trustDomain`, else `nvkectl-bootstrap.nke.local` with a warning | `${KIND_CLUSTER_NAME}.nvke.local` |
-| management VIP | `cluster.controlPlaneVIP`, or the only node's IP | kind control-plane IP |
+| management VIP | `cluster.loadBalancer` address (or the deprecated `cluster.controlPlaneVIP`), or the only node's IP | kind control-plane IP |
 | SPIRE admin path | a constant, `/nvke-service/nvke-controller` | the same |
 | TPM attestor **server** checksum | pinned per the nodes' architecture, `--arch` | pinned per arch in `resolve_tpm_checksum()` |
 | OIDC domains / IP SANs | the overlay's hostnames plus the VIP | VIP plus the kind gateway |

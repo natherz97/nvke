@@ -157,7 +157,7 @@ func TestValidateCreateClusterRequestFields_ControlPlaneConfig(t *testing.T) {
 
 		err := svc.ValidateCreateClusterRequestFields(req)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "controlPlaneVIP")
+		require.Contains(t, err.Error(), "an API endpoint is required")
 	})
 
 	t.Run("accepts multiple control-plane nodes with a VIP", func(t *testing.T) {
@@ -303,11 +303,11 @@ func TestApplyClusterLevelControlPlaneSpecUpdate_DesiredCount(t *testing.T) {
 
 	newCAPICluster := func(current int, vip string) *db.Cluster {
 		return &db.Cluster{
-			ID:              uuid.New(),
-			ProviderType:    db.ProviderTypeCAPI,
-			ControlPlaneVIP: vip,
+			ID:           uuid.New(),
+			ProviderType: db.ProviderTypeCAPI,
 			ControlPlaneConfig: db.ControlPlaneConfig{
-				DesiredCount: current,
+				DesiredCount:           current,
+				ControlPlaneConfigSpec: testutil.WithKubeVIP(db.ControlPlaneConfigSpec{}, vip),
 			},
 			Nico: &db.NicoClusterProvider{
 				SiteID: uuid.Nil, // CAPI cluster avoids Forge networking lookups.
@@ -345,7 +345,7 @@ func TestApplyClusterLevelControlPlaneSpecUpdate_DesiredCount(t *testing.T) {
 			DesiredCount: &desired,
 		}, &spec)
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "controlPlaneVIP")
+		require.Contains(t, err.Error(), "an API endpoint is required")
 		require.Equal(t, 3, cluster.ControlPlaneConfig.DesiredCount)
 	})
 
@@ -376,8 +376,7 @@ func TestApplyClusterLevelControlPlaneSpecUpdate_DesiredCount(t *testing.T) {
 		cluster := &db.Cluster{
 			ID:                 uuid.New(),
 			ProviderType:       db.ProviderTypeLaunchLayer,
-			ControlPlaneVIP:    "172.31.0.10",
-			ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 1},
+			ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 1, ControlPlaneConfigSpec: testutil.WithKubeVIP(db.ControlPlaneConfigSpec{}, "172.31.0.10")},
 		}
 		spec := db.ConfigSpecFromFull(cluster.ControlPlaneConfig)
 		desired := 3
@@ -396,8 +395,7 @@ func TestApplyClusterLevelControlPlaneSpecUpdate_DesiredCount(t *testing.T) {
 		cluster := &db.Cluster{
 			ID:                 uuid.New(),
 			ProviderType:       db.ProviderTypeLaunchLayer,
-			ControlPlaneVIP:    "172.31.0.10",
-			ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 1},
+			ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 1, ControlPlaneConfigSpec: testutil.WithKubeVIP(db.ControlPlaneConfigSpec{}, "172.31.0.10")},
 		}
 		spec := db.ConfigSpecFromFull(cluster.ControlPlaneConfig)
 		spec.SetLaunchLayer(db.LaunchLayerControlPlaneProvider{InstanceType: "vm200", VMProfile: "ubuntu"})
@@ -455,11 +453,10 @@ func TestApplyClusterControlPlaneConfigUpdate_RolloutRequiresVIP(t *testing.T) {
 				ProviderType:      db.ProviderTypeNico,
 				Nico:              &db.NicoClusterProvider{},
 				KubernetesVersion: "1.34.2",
-				ControlPlaneVIP:   tc.controlPlaneVIP,
 				ControlPlaneConfig: db.ControlPlaneConfig{
 					ConfigurationID:        oldConfigID,
 					DesiredCount:           1,
-					ControlPlaneConfigSpec: currentSpec,
+					ControlPlaneConfigSpec: testutil.WithKubeVIP(currentSpec, tc.controlPlaneVIP),
 				},
 			}
 			newProfile := "cfg-v2"
@@ -487,7 +484,7 @@ func TestApplyClusterControlPlaneConfigUpdate_RolloutRequiresVIP(t *testing.T) {
 			})
 			if tc.wantBadRequest {
 				require.Error(t, err)
-				assert.Contains(t, err.Error(), "controlPlaneVIP")
+				assert.Contains(t, err.Error(), "an API endpoint is required")
 				tx.AssertNotCalled(t, "CreateControlPlaneConfiguration", mock.Anything, mock.Anything)
 				return
 			}
@@ -982,7 +979,7 @@ func TestControlPlaneVIPOverrideCreateAndScale(t *testing.T) {
 			if allow {
 				require.NoError(t, err)
 			} else {
-				require.ErrorContains(t, err, "controlPlaneVIP")
+				require.ErrorContains(t, err, "an API endpoint is required")
 			}
 			cluster := &db.Cluster{
 				ProviderType:       db.ProviderTypeCAPI,
@@ -997,7 +994,7 @@ func TestControlPlaneVIPOverrideCreateAndScale(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, desired, cluster.ControlPlaneConfig.DesiredCount)
 			} else {
-				require.ErrorContains(t, err, "controlPlaneVIP")
+				require.ErrorContains(t, err, "an API endpoint is required")
 				require.Equal(t, 1, cluster.ControlPlaneConfig.DesiredCount)
 			}
 		})

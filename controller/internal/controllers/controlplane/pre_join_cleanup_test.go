@@ -30,6 +30,7 @@ import (
 	"github.com/dsx-ai-factory/nvke/controller/internal/db"
 	"github.com/dsx-ai-factory/nvke/controller/internal/nodes"
 	"github.com/dsx-ai-factory/nvke/controller/internal/temporal/activities"
+	"github.com/dsx-ai-factory/nvke/controller/internal/testutil"
 )
 
 // Execute real cleanup and condition activities against a stateful store, then
@@ -164,8 +165,8 @@ func TestPreJoinCleanupQueuedDeleteReachesTeardownOutbox(t *testing.T) {
 		t.Run(siblingState+"_sibling", func(t *testing.T) {
 			ctx := t.Context()
 			cluster := db.Cluster{
-				ID: uuid.New(), Name: "cleanup-delete", ControlPlaneVIP: "10.0.0.100", ProviderType: db.ProviderTypeCAPI,
-				ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 2},
+				ID: uuid.New(), Name: "cleanup-delete", ProviderType: db.ProviderTypeCAPI,
+				ControlPlaneConfig: db.ControlPlaneConfig{DesiredCount: 2, ControlPlaneConfigSpec: testutil.WithKubeVIP(db.ControlPlaneConfigSpec{}, "10.0.0.100")},
 				Conditions:         db.ClusterConditions{Provisioned: db.NewCondition(true, "provisioned")},
 			}
 			target := readyNode("cp-joining", time.Now())

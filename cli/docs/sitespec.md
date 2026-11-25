@@ -276,7 +276,8 @@ applies every file in `infra.nico.releases`.
 | `cluster.k8sVersion` | string | yes | Plain semantic version, e.g. `1.32.0` (no leading `v`). |
 | `cluster.cniName` | string | no | Defaults to and must be `ovn-kubernetes`. |
 | `cluster.cniVersion` | string | no | CNI plugin version. Empty uses the node-agent default. |
-| `cluster.controlPlaneVIP` | string | for multiple nodes | IPv4 control-plane VIP. Required when `cluster.nodes` has more than one entry, or `infra.nico.controlPlane.count` is more than one. A single-node cluster may omit it and use that node's IP as its fixed endpoint, except with `nico`: the node has no address until NICo allocates it, so the controller stack install needs the VIP even for one node (the bootstrap does not, and warns). Set it before the bootstrap: it cannot be added once the site cluster exists. `bootstrap site` and `validate sitespec` warn without it, and `render deploy-path` refuses the spec. See below. |
+| `cluster.loadBalancer` | mapping | for multiple nodes | How the Kubernetes API endpoint is provided. Replaces `cluster.controlPlaneVIP` and cannot be combined with it. Set exactly one of `kubeVIP.vip`, `external.host` or `firstMachineIP: {}`. See [The control-plane VIP](#the-control-plane-vip). |
+| `cluster.controlPlaneVIP` | string | for multiple nodes | Deprecated: use `cluster.loadBalancer.kubeVIP.vip`. IPv4 control-plane VIP. Required when `cluster.nodes` has more than one entry, or `infra.nico.controlPlane.count` is more than one. A single-node cluster may omit it and use that node's IP as its fixed endpoint, except with `nico`: the node has no address until NICo allocates it, so the controller stack install needs the VIP even for one node (the bootstrap does not, and warns). Set it before the bootstrap: it cannot be added once the site cluster exists. `bootstrap site` and `validate sitespec` warn without it, and `render deploy-path` refuses the spec. See below. |
 | `cluster.podCidr` | string | yes | Valid CIDR. A comma-separated list of CIDRs is allowed. Must not overlap `serviceCidr`. |
 | `cluster.serviceCidr` | string | yes | Valid CIDR. |
 | `cluster.nodeAgentPort` | string | no | Port number 1–65535. Defaults to `15005`. |
@@ -330,10 +331,15 @@ so a file it passes is one `bootstrap site` accepts on this host; pass
 - `podCidr` / `serviceCidr` are parsed as CIDRs; `podCidr` also accepts a
   comma-separated list and validates each entry. No `podCidr` entry may
   overlap `serviceCidr`.
-- `controlPlaneVIP`, when set, must parse as a routable unicast IPv4 address,
-  and must not fall inside `podCidr` or `serviceCidr`. It may equal a declared
-  node IP.
-- `controlPlaneVIP` is required when `cluster.nodes` contains more than one
+- `controlPlaneVIP`, `loadBalancer.kubeVIP.vip` and `loadBalancer.external.host`,
+  when set, must parse as a routable unicast IPv4 address, and must not fall
+  inside `podCidr` or `serviceCidr`. It may equal a declared node IP.
+- `cluster.loadBalancer` must set exactly one of `external`, `kubeVIP` or
+  `firstMachineIP`, and cannot be combined with `controlPlaneVIP`.
+  `firstMachineIP` is refused when the cluster has more than one control-plane
+  node, because the endpoint is the first node's IP.
+- An endpoint (`controlPlaneVIP`, `loadBalancer.kubeVIP.vip` or
+  `loadBalancer.external.host`) is required when `cluster.nodes` contains more than one
   node, or `infra.nico.controlPlane.count` is more than one. With `nico` it is
   needed for one node too: the bootstrap runs without it, but the controller
   stack install is refused, and the VIP cannot be added once the site cluster
@@ -532,6 +538,19 @@ kubectl taint nodes --all node-role.kubernetes.io/control-plane:NoSchedule- \
 ```
 
 ## The control-plane VIP
+
+`cluster.loadBalancer` chooses how the Kubernetes API endpoint is provided. It
+replaces the deprecated `cluster.controlPlaneVIP`, which still works and means
+the same as `loadBalancer.kubeVIP.vip`. Set exactly one option:
+
+| Option | Endpoint | What NVKE does |
+|---|---|---|
+| `kubeVIP.vip` | The VIP | Runs kube-vip on every control-plane node and advertises the VIP over BGP. |
+| `external.host` | The address you give | Does not configure kube-vip. You bring the address up on the control-plane nodes yourself, for example with a kube-vip you manage. |
+| `firstMachineIP: {}` | The first control-plane node's IP | Does not configure kube-vip. For development with one control-plane node. |
+
+The rest of this section describes `kubeVIP` and `controlPlaneVIP`. With
+`external`, the address rules apply too, but nothing here about kube-vip or BGP does.
 
 `cluster.controlPlaneVIP` is an IPv4 address that fronts the Kubernetes API for
 every control-plane node. It is required when `cluster.nodes` contains more than

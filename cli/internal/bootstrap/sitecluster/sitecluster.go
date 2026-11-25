@@ -61,8 +61,6 @@ func ClusterRequest(inv *sitespec.SiteSpec) (api.CreateClusterJSONRequestBody, e
 		ControlPlaneKubernetesVersion: inv.Cluster.K8sVersion,
 		CniPlugin:                     api.CreateClusterRequestCniPlugin(inv.Cluster.CniName),
 		EtcdEncrypted:                 inv.Cluster.EtcdEncryptionEnabled(),
-		// A plain string with omitempty: an unset VIP is left out of the body.
-		ControlPlaneVIP: inv.Cluster.ControlPlaneVIP,
 		ControlPlaneConfig: &api.CreateClusterControlPlaneConfig{
 			DesiredCount:         len(hosts),
 			SystemReservedMemory: inv.Cluster.KubeletConfig.SystemReservedMemory,
@@ -106,7 +104,6 @@ func nicoClusterRequest(inv *sitespec.SiteSpec) (api.CreateClusterJSONRequestBod
 		ControlPlaneKubernetesVersion: inv.Cluster.K8sVersion,
 		CniPlugin:                     api.CreateClusterRequestCniPlugin(inv.Cluster.CniName),
 		EtcdEncrypted:                 inv.Cluster.EtcdEncryptionEnabled(),
-		ControlPlaneVIP:               inv.Cluster.ControlPlaneVIP,
 		Nico:                          provider,
 		ControlPlaneConfig: &api.CreateClusterControlPlaneConfig{
 			DesiredCount:         n.ControlPlane.Count,
@@ -127,6 +124,32 @@ func applySharedSettings(req *api.CreateClusterJSONRequestBody, inv *sitespec.Si
 	if network := clusterNetwork(inv); network != nil {
 		req.Network = network
 	}
+	applyAPIEndpoint(req, inv)
+}
+
+// applyAPIEndpoint sets how the Kubernetes API endpoint is provided on a create
+// request: the site spec's loadBalancer when it has one, otherwise the
+// deprecated controlPlaneVIP. The request must already carry a
+// ControlPlaneConfig.
+func applyAPIEndpoint(req *api.CreateClusterJSONRequestBody, inv *sitespec.SiteSpec) {
+	lb := inv.Cluster.LoadBalancer
+	if lb == nil {
+		// A plain string with omitempty: an unset VIP is left out of the body.
+		req.ControlPlaneVIP = inv.Cluster.ControlPlaneVIP
+		return
+	}
+
+	out := &api.LoadBalancer{}
+	if lb.External != nil {
+		out.External = &api.ExternalLoadBalancer{Host: lb.External.Host}
+	}
+	if lb.KubeVIP != nil {
+		out.KubeVIP = &api.KubeVIPLoadBalancer{Vip: lb.KubeVIP.VIP}
+	}
+	if lb.FirstMachineIP != nil {
+		out.FirstMachineIP = &api.FirstMachineIPLoadBalancer{}
+	}
+	req.ControlPlaneConfig.LoadBalancer = out
 }
 
 // provisionedHosts renders the site spec's nodes as ProvisionedCluster hosts.

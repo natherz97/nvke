@@ -282,6 +282,7 @@ func TestOpenAPIValidator_CreateCluster(t *testing.T) {
 					bodyStr := rr.Body.String()
 					assert.True(t,
 						strings.Contains(bodyStr, "controlPlaneVIP") ||
+							strings.Contains(bodyStr, "control-plane endpoint") ||
 							strings.Contains(bodyStr, "format") ||
 							strings.Contains(bodyStr, "request body"),
 						"invalid controlPlaneVIP rejection should reference the offending field or format; got %d: %s", rr.Code, bodyStr)
@@ -813,6 +814,117 @@ func TestOpenAPIValidator_MachineMetadataIsCreateOnly(t *testing.T) {
 			require.Contains(t, rr.Body.String(), field)
 		})
 	}
+}
+
+// openAPILoadBalancerCreateBody returns a valid Forge create request body with
+// the given raw JSON under controlPlaneConfig.loadBalancer and any extra
+// top-level fields.
+func openAPILoadBalancerCreateBody(t *testing.T, loadBalancer string, extra map[string]any) []byte {
+	t.Helper()
+
+	raw, err := json.Marshal(openAPIForgeCreateClusterRequest())
+	require.NoError(t, err)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(raw, &body))
+
+	controlPlaneConfig, ok := body["controlPlaneConfig"].(map[string]any)
+	require.True(t, ok, "the base request carries a controlPlaneConfig")
+	var decoded any
+	require.NoError(t, json.Unmarshal([]byte(loadBalancer), &decoded))
+	controlPlaneConfig["loadBalancer"] = decoded
+	for key, value := range extra {
+		body[key] = value
+	}
+
+	out, err := json.Marshal(body)
+	require.NoError(t, err)
+	return out
+}
+
+func TestOpenAPIValidator_CreateCluster_LoadBalancer(t *testing.T) {
+	newHandler := func(t *testing.T) http.Handler {
+		t.Helper()
+		mockDB := &testutil.MockDB{}
+		mockDB.MockTx = &testutil.MockTx{}
+		mockDB.GetTx = func() db.Tx { return mockDB.MockTx }
+		mockDB.On("RunInTx", mock.Anything, mock.Anything).Return(nil).Maybe()
+		stubOpenAPICreateClusterTx(mockDB)
+		return newTestServerWithValidator(t, mockDB)
+	}
+	post := func(handler http.Handler, body []byte) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/clusters", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr
+	}
+
+	t.Run("schema accepts each option", func(t *testing.T) {
+		handler := newHandler(t)
+		for name, loadBalancer := range map[string]string{
+			"firstMachineIP empty object": `{"firstMachineIP":{}}`,
+			"kubeVIP":                     `{"kubeVIP":{"vip":"172.31.0.10"}}`,
+			"external":                    `{"external":{"host":"172.31.0.10"}}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				rr := post(handler, openAPILoadBalancerCreateBody(t, loadBalancer, nil))
+				rejected := rr.Code == http.StatusBadRequest && strings.Contains(rr.Body.String(), "request body")
+				assert.False(t, rejected, "the schema should accept %s; got %d: %s", loadBalancer, rr.Code, rr.Body.String())
+			})
+		}
+	})
+
+	t.Run("schema rejects", func(t *testing.T) {
+		handler := newHandler(t)
+		for name, loadBalancer := range map[string]string{
+			"unknown key under firstMachineIP": `{"firstMachineIP":{"unexpected":true}}`,
+			"external without host":            `{"external":{}}`,
+			"kubeVIP without vip":              `{"kubeVIP":{}}`,
+			"unknown key under external":       `{"external":{"host":"172.31.0.10","port":6443}}`,
+			"unknown option":                   `{"bogus":{}}`,
+		} {
+			t.Run(name, func(t *testing.T) {
+				rr := post(handler, openAPILoadBalancerCreateBody(t, loadBalancer, nil))
+				assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+				assert.Contains(t, rr.Body.String(), "request body")
+			})
+		}
+	})
+
+	t.Run("handler rejects what the schema allows", func(t *testing.T) {
+		handler := newHandler(t)
+		tests := []struct {
+			name         string
+			loadBalancer string
+			extra        map[string]any
+			want         string
+		}{
+			{name: "no option", loadBalancer: `{}`, want: "exactly one"},
+			{name: "two options", loadBalancer: `{"external":{"host":"172.31.0.10"},"kubeVIP":{"vip":"172.31.0.11"}}`, want: "exactly one"},
+			{name: "with a different controlPlaneVIP", loadBalancer: `{"kubeVIP":{"vip":"172.31.0.10"}}`, extra: map[string]any{"controlPlaneVIP": "172.31.0.11"}, want: "must equal the address"},
+			{name: "firstMachineIP with controlPlaneVIP", loadBalancer: `{"firstMachineIP":{}}`, extra: map[string]any{"controlPlaneVIP": "172.31.0.10"}, want: "cannot be combined"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				rr := post(handler, openAPILoadBalancerCreateBody(t, tt.loadBalancer, tt.extra))
+				assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+				assert.Contains(t, rr.Body.String(), tt.want)
+				assert.NotContains(t, rr.Body.String(), "request body", "this is the handler's message, not the schema's")
+			})
+		}
+	})
+}
+
+func TestOpenAPIValidator_LoadBalancerIsCreateOnly(t *testing.T) {
+	handler := newTestServerWithValidator(t, &testutil.MockDB{})
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPatch,
+		"/api/clusters/550e8400-e29b-41d4-a716-446655440000",
+		strings.NewReader(`{"controlPlaneConfig":{"loadBalancer":{"kubeVIP":{"vip":"172.31.0.10"}}}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+	require.Contains(t, rr.Body.String(), "loadBalancer")
 }
 
 func TestOpenAPIValidator_ControlPlaneMachineMetadataIsCreateOnly(t *testing.T) {

@@ -77,7 +77,7 @@ func (a *Activities) kubeadmInit(ctx context.Context, input KubeadmInitInput) er
 	}
 
 	// Use the control plane VIP if set, otherwise fallback to the node IP
-	controlPlaneEndpoint := cluster.ControlPlaneVIP
+	controlPlaneEndpoint := cluster.APIEndpoint()
 	if controlPlaneEndpoint == "" {
 		controlPlaneEndpoint = node.IP
 	}

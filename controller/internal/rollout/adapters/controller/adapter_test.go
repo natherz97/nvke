@@ -13,6 +13,7 @@ import (
 	"github.com/dsx-ai-factory/nvke/controller/internal/db"
 	"github.com/dsx-ai-factory/nvke/controller/internal/rollout"
 	"github.com/dsx-ai-factory/nvke/controller/internal/rollout/adapters/controller"
+	"github.com/dsx-ai-factory/nvke/controller/internal/testutil"
 )
 
 func TestNodeAdapter_RoleFromControlPlaneFlag(t *testing.T) {
@@ -43,10 +44,10 @@ func TestClusterAdapter_MappingAndDeterministicOrder(t *testing.T) {
 	cps := []db.Node{cpB, cpA}
 
 	cluster := controller.NewCluster(db.Cluster{
-		ID:                clusterID,
-		Name:              "test",
-		KubernetesVersion: "v1.30.0",
-		ControlPlaneVIP:   "10.0.0.5",
+		ID:                 clusterID,
+		Name:               "test",
+		KubernetesVersion:  "v1.30.0",
+		ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.5"),
 	}, all, cps, "15005")
 
 	assert.Equal(t, clusterID, cluster.ID())

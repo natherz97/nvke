@@ -63,7 +63,7 @@ nvkectl generate sitespec <cluster-name> [flags]
 ```
   -h, --help[=true|false]   help for sitespec
       --nodes string        Path to the node CSV, or '-' to read standard input (required)
-      --set stringArray     Set a field, as path=value. Repeatable. Accepts: cluster.cniName, cluster.cniVersion, cluster.controlPlaneVIP, cluster.etcdEncryption, cluster.k8sVersion, cluster.kubeletConfig.systemReservedMemory, cluster.nodeAgentPort, cluster.podCidr, cluster.serviceCidr, clusterName, spire.trustDomain, spire.upstreamCA
+      --set stringArray     Set a field, as path=value. Repeatable. Accepts: cluster.cniName, cluster.cniVersion, cluster.controlPlaneVIP, cluster.etcdEncryption, cluster.k8sVersion, cluster.kubeletConfig.systemReservedMemory, cluster.loadBalancer.external.host, cluster.loadBalancer.kubeVIP.vip, cluster.nodeAgentPort, cluster.podCidr, cluster.serviceCidr, clusterName, spire.trustDomain, spire.upstreamCA
 ```
 
 ### Options inherited from parent commands

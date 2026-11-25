@@ -335,13 +335,13 @@ another set of NICo machines. Bootstrap does not reuse an existing Kind cluster.
 **`the control-plane VIP ... is accepting connections on port 6443`**
 
 With `infra.provider: nico` there are no hosts to probe, so the bootstrap dials
-`cluster.controlPlaneVIP` on port 6443 before it builds anything. An answer
+the cluster's endpoint address (`cluster.loadBalancer`, or the deprecated `cluster.controlPlaneVIP`) on port 6443 before it builds anything. An answer
 means a site cluster for this spec is most likely running: a second bootstrap
 would allocate another set of NICo machines and bring up a second control plane
 advertising the same VIP. If that cluster is yours, do not re-run. If it is a
 half-built one from a failed bootstrap, [release its NICo
 instances](#release-the-nico-instances-first) and re-run once the VIP stops
-answering. If something else holds the address, change `cluster.controlPlaneVIP`.
+answering. If something else holds the address, change it in `cluster.loadBalancer` (or `cluster.controlPlaneVIP`).
 
 **`port 6443, the Kubernetes API port, is accepting connections on: <node> (<ip>)`**
 
@@ -466,7 +466,7 @@ and kubelet logs, including errors about missing encryption configuration.
 **Bootstrap reports the cluster provisioned, but `kubectl` through the control-plane VIP times out**
 
 Check API access directly on a control-plane node to distinguish an API
-failure from a VIP routing problem. Check `cluster.controlPlaneVIP` is in the
+failure from a VIP routing problem. Check the VIP (`cluster.loadBalancer.kubeVIP.vip`, or `cluster.controlPlaneVIP`) is in the
 nodes' subnet, unused by other hosts and reachable from your client. Inspect
 the `kube-vip` pod logs under `/var/log/pods` for leader-election or network
 errors.
@@ -560,7 +560,7 @@ checks catch common leftovers; they do not prove a node is clean or safe to
 reset.
 
 With `infra.provider: nico` the existing-cluster check applies, and a probe of
-`cluster.controlPlaneVIP` on port 6443 when the VIP is set; a one-node spec
+the endpoint address (`cluster.loadBalancer` or `cluster.controlPlaneVIP`) on port 6443 when it is set; a one-node spec
 without one has nothing to probe. The nodes are allocated rather than
 listed, so there is no host to probe, and the preflight cannot see the NICo
 instances an earlier run allocated. It stops a re-run while the retained Kind

@@ -1588,8 +1588,8 @@ func TestValidate_NicoControlPlaneVIP(t *testing.T) {
 			inv.Cluster.ControlPlaneVIP = tc.vip
 			err := inv.Validate()
 			if tc.wantErr {
-				if err == nil || !strings.Contains(err.Error(), pathControlPlaneVIP+" is required") {
-					t.Fatalf("Validate error = %v, want %s is required", err, pathControlPlaneVIP)
+				if err == nil || !strings.Contains(err.Error(), pathLoadBalancerKubeVIPVIP+" (or the deprecated "+pathControlPlaneVIP+") is required") {
+					t.Fatalf("Validate error = %v, want the endpoint address to be required", err)
 				}
 				return
 			}

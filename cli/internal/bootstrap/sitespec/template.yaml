@@ -56,6 +56,15 @@ cluster:
   # cluster may leave it empty and use that node's IP as its fixed endpoint.
   # controlPlaneVIP: "10.0.0.100"
 
+  # Replaces controlPlaneVIP, which is deprecated and cannot be combined with
+  # this. Set exactly one of external, kubeVIP or firstMachineIP.
+  #   external.host: an IPv4 endpoint you provide. NVKE does not configure kube-vip.
+  #   kubeVIP.vip: an IPv4 address NVKE configures kube-vip to advertise.
+  #   firstMachineIP: {}  uses the first control-plane node's IP (development only).
+  # loadBalancer:
+  #   kubeVIP:
+  #     vip: "10.0.0.100"
+
   # Optional: gRPC port nvke-agent listens on. Defaults to "15005".
   # nodeAgentPort: "15005"
 

@@ -19,6 +19,7 @@ import (
 	rolloutoidc "github.com/dsx-ai-factory/nvke/controller/internal/rollout/operations/oidc"
 	rollouttemporal "github.com/dsx-ai-factory/nvke/controller/internal/rollout/temporal"
 	"github.com/dsx-ai-factory/nvke/controller/internal/temporal/activities"
+	"github.com/dsx-ai-factory/nvke/controller/internal/testutil"
 )
 
 func TestEnableOIDCWorkflow_CompletesThenWritesBackAndMarks(t *testing.T) {
@@ -94,10 +95,10 @@ func expectOIDCClusterLoad(env *testsuite.TestWorkflowEnvironment, clusterID, no
 		&rollouttemporal.LoadClusterForRolloutRequest{ClusterID: clusterID}).
 		Return(&rollouttemporal.LoadClusterForRolloutResponse{
 			Cluster: db.Cluster{
-				ID:                clusterID,
-				Name:              "tenant-a",
-				KubernetesVersion: "v1.31.9",
-				ControlPlaneVIP:   "10.0.0.1",
+				ID:                 clusterID,
+				Name:               "tenant-a",
+				KubernetesVersion:  "v1.31.9",
+				ControlPlaneConfig: testutil.KubeVIPControlPlaneConfig("10.0.0.1"),
 			},
 			Nodes:         []db.Node{node},
 			CPNodes:       []db.Node{node},

@@ -188,6 +188,8 @@ func applySpec(root *yaml.Node, spec *SiteSpec) error {
 	for _, f := range []field{
 		{pathCniVersion, spec.Cluster.CniVersion},
 		{pathControlPlaneVIP, spec.Cluster.ControlPlaneVIP},
+		{pathLoadBalancerExternalHost, loadBalancerExternalHost(spec.Cluster)},
+		{pathLoadBalancerKubeVIPVIP, loadBalancerKubeVIP(spec.Cluster)},
 		{pathNodeAgentPort, nodeAgentPort},
 		{pathSpireTrustDomain, spec.Spire.TrustDomain},
 	} {
